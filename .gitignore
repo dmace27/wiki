@@ -1,0 +1,12 @@
+/build/
+/out/
+/vcpkg_installed/
+/.cache/
+.DS_Store
+
+# Runtime project data (the repository itself is not a kc project).
+/kc.json
+/sources/
+/vault/
+/.knowledge-compiler/
+

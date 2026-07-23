@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "project_id": "prj_01J00000000000000000000000",
+  "paths": {
+    "sources": "sources",
+    "vault": "vault",
+    "state": ".knowledge-compiler/state.sqlite",
+    "cache": ".knowledge-compiler"
+  },
+  "vault": {
+    "source_directory": "_sources",
+    "generated_section_id": "knowledge-compiler"
+  },
+  "providers": {
+    "llm": {
+      "default": "ollama",
+      "ollama": {
+        "base_url": "http://127.0.0.1:11434",
+        "model": "gemma3:12b",
+        "timeout_seconds": 300
+      }
+    },
+    "ocr": {
+      "default": "tesseract",
+      "language": "eng"
+    }
+  }
+}
+

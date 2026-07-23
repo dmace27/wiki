@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "operation": "create_article",
+  "article": {
+    "title": "Markov Chains",
+    "slug": "markov-chains",
+    "aliases": ["Markov chain"]
+  },
+  "sections": [
+    {
+      "key": "working_explanation",
+      "heading": "My working explanation",
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "text": "A Markov chain moves between states using transition probabilities.",
+          "citations": [
+            {
+              "page_id": "pg_01J00000000000000000000000",
+              "start_char": 2,
+              "end_char": 14,
+              "quote": "Markov chain"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "related_concepts": [
+    {
+      "title": "Conditional Probability",
+      "reason": "Transition probabilities are conditional probabilities.",
+      "citations": [
+        {
+          "page_id": "pg_01J00000000000000000000000",
+          "start_char": 2,
+          "end_char": 14,
+          "quote": "Markov chain"
+        }
+      ]
+    }
+  ]
+}
+

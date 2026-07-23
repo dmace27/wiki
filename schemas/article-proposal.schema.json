@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "article-proposal.schema.json",
+  "title": "ArticleProposal",
+  "type": "object",
+  "required": ["schema_version", "operation", "article", "sections", "related_concepts"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "operation": { "enum": ["create_article", "update_article"] },
+    "article": {
+      "type": "object",
+      "required": ["title", "slug"],
+      "properties": {
+        "article_id": { "type": "string", "pattern": "^art_" },
+        "title": { "type": "string", "minLength": 1 },
+        "slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "aliases": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["key", "heading", "blocks"],
+        "properties": {
+          "key": {
+            "enum": ["working_explanation", "key_ideas", "example", "related_concepts"]
+          },
+          "heading": { "type": "string" },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["kind", "text", "citations"],
+              "properties": {
+                "kind": { "enum": ["paragraph", "bullet"] },
+                "text": { "type": "string", "minLength": 1 },
+                "citations": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "$ref": "citation.schema.json" }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "related_concepts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "reason", "citations"],
+        "properties": {
+          "title": { "type": "string" },
+          "reason": { "type": "string" },
+          "citations": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "citation.schema.json" }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
+

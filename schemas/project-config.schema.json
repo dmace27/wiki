@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "project-config.schema.json",
+  "title": "ProjectConfig",
+  "type": "object",
+  "required": ["schema_version", "project_id", "paths", "vault", "providers"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "project_id": { "type": "string", "pattern": "^prj_[0-9A-HJKMNP-TV-Z]+$" },
+    "paths": {
+      "type": "object",
+      "required": ["sources", "vault", "state", "cache"],
+      "properties": {
+        "sources": { "type": "string", "minLength": 1 },
+        "vault": { "type": "string", "minLength": 1 },
+        "state": { "type": "string", "minLength": 1 },
+        "cache": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "vault": {
+      "type": "object",
+      "required": ["source_directory", "generated_section_id"],
+      "properties": {
+        "source_directory": { "type": "string", "minLength": 1 },
+        "generated_section_id": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "providers": {
+      "type": "object",
+      "required": ["llm", "ocr"],
+      "properties": {
+        "llm": {
+          "type": "object",
+          "required": ["default", "ollama"],
+          "properties": {
+            "default": { "type": "string", "minLength": 1 },
+            "ollama": {
+              "type": "object",
+              "required": ["base_url", "model", "timeout_seconds"],
+              "properties": {
+                "base_url": { "type": "string", "minLength": 1 },
+                "model": { "type": "string", "minLength": 1 },
+                "timeout_seconds": { "type": "integer", "minimum": 1 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "ocr": {
+          "type": "object",
+          "required": ["default", "language"],
+          "properties": {
+            "default": { "type": "string", "minLength": 1 },
+            "language": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
+
