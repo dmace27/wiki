@@ -8,6 +8,8 @@
 #include <string_view>
 #include <utility>
 
+// Validate fixtures independently of the C++ parser so the checked-in JSON
+// Schemas remain an accurate external contract.
 TEST_CASE("all JSON fixtures validate against their documented schemas") {
   const std::filesystem::path schemas = KC_TEST_SCHEMAS_DIR;
   const std::filesystem::path fixtures = KC_TEST_FIXTURES_DIR;
@@ -27,4 +29,3 @@ TEST_CASE("all JSON fixtures validate against their documented schemas") {
     REQUIRE_NOTHROW(validator.validate(kc::test::read_json(fixtures / fixture_name)));
   }
 }
-

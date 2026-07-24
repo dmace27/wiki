@@ -1,11 +1,16 @@
+-- Initial durable state for a Knowledge Compiler project.
+-- Foreign keys preserve provenance relationships; WAL allows readers to keep
+-- working while a writer commits a transaction.
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 
+-- Records migration versions so startup only applies each SQL file once.
 CREATE TABLE schema_migrations (
   version INTEGER PRIMARY KEY,
   applied_at TEXT NOT NULL
 );
 
+-- A source is the logical document across all of its imported revisions.
 CREATE TABLE sources (
   source_id TEXT PRIMARY KEY,
   display_name TEXT NOT NULL,
@@ -15,6 +20,7 @@ CREATE TABLE sources (
   archived_at TEXT
 );
 
+-- Each content hash represents an immutable snapshot of a source file.
 CREATE TABLE source_versions (
   source_version_id TEXT PRIMARY KEY,
   source_id TEXT NOT NULL REFERENCES sources(source_id),
@@ -26,6 +32,7 @@ CREATE TABLE source_versions (
   imported_at TEXT NOT NULL
 );
 
+-- Extraction produces one searchable/citable row per logical or PDF page.
 CREATE TABLE source_pages (
   page_id TEXT PRIMARY KEY,
   source_version_id TEXT NOT NULL REFERENCES source_versions(source_version_id),
@@ -38,6 +45,7 @@ CREATE TABLE source_pages (
   UNIQUE (source_version_id, page_number)
 );
 
+-- Diagnostic history for native extraction and optional OCR attempts.
 CREATE TABLE extraction_runs (
   run_id TEXT PRIMARY KEY,
   source_version_id TEXT NOT NULL REFERENCES source_versions(source_version_id),
@@ -50,6 +58,7 @@ CREATE TABLE extraction_runs (
   error_message TEXT
 );
 
+-- Stable identity and vault location for each compiled concept article.
 CREATE TABLE articles (
   article_id TEXT PRIMARY KEY,
   title TEXT NOT NULL COLLATE NOCASE UNIQUE,
@@ -60,6 +69,7 @@ CREATE TABLE articles (
   updated_at TEXT NOT NULL
 );
 
+-- Auditable metadata and output from each language-model request.
 CREATE TABLE model_runs (
   run_id TEXT PRIMARY KEY,
   provider TEXT NOT NULL,
@@ -73,6 +83,7 @@ CREATE TABLE model_runs (
   error_message TEXT
 );
 
+-- Structured, immutable changes awaiting or recording human review.
 CREATE TABLE proposals (
   proposal_id TEXT PRIMARY KEY,
   article_id TEXT REFERENCES articles(article_id),
@@ -85,6 +96,7 @@ CREATE TABLE proposals (
   applied_at TEXT
 );
 
+-- Evidence spans supporting individual blocks in a pending proposal.
 CREATE TABLE proposal_citations (
   proposal_id TEXT NOT NULL REFERENCES proposals(proposal_id),
   section_key TEXT NOT NULL,
@@ -96,6 +108,7 @@ CREATE TABLE proposal_citations (
   PRIMARY KEY (proposal_id, section_key, block_index, page_id, start_char)
 );
 
+-- Evidence currently present in the successfully written article.
 CREATE TABLE article_citations (
   article_id TEXT NOT NULL REFERENCES articles(article_id),
   section_key TEXT NOT NULL,
@@ -104,6 +117,7 @@ CREATE TABLE article_citations (
   PRIMARY KEY (article_id, section_key, block_index, page_id)
 );
 
+-- Audit and recovery information for every approved vault write.
 CREATE TABLE apply_runs (
   apply_run_id TEXT PRIMARY KEY,
   proposal_id TEXT NOT NULL UNIQUE REFERENCES proposals(proposal_id),
@@ -114,6 +128,7 @@ CREATE TABLE apply_runs (
   applied_at TEXT NOT NULL
 );
 
+-- Full-text index used for fast local title and article-body searches.
 CREATE VIRTUAL TABLE article_fts USING fts5(
   article_id UNINDEXED,
   title,
@@ -121,4 +136,3 @@ CREATE VIRTUAL TABLE article_fts USING fts5(
   body,
   tokenize = 'unicode61 remove_diacritics 2'
 );
-

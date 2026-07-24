@@ -4,6 +4,8 @@
 
 #include <regex>
 
+// IDs expose their object type in a prefix and use the restricted Crockford
+// alphabet; two sequential calls must still produce distinct values.
 TEST_CASE("generated IDs are type-prefixed Crockford ULIDs") {
   const auto first = kc::domain::generate_source_id();
   const auto second = kc::domain::generate_source_id();
@@ -13,4 +15,3 @@ TEST_CASE("generated IDs are type-prefixed Crockford ULIDs") {
                          std::regex("^prj_[0-9A-HJKMNP-TV-Z]{26}$")));
   CHECK(first.value != second.value);
 }
-

@@ -11,6 +11,8 @@
 
 namespace {
 
+/// Locate SQL migrations beside an installed executable, with the source tree
+/// as a development-build fallback.
 std::filesystem::path migration_directory(const char* executable) {
   const auto executable_path = std::filesystem::absolute(executable).lexically_normal();
   const auto installed = executable_path.parent_path().parent_path() / KC_INSTALL_MIGRATIONS_SUBDIR;
@@ -20,6 +22,7 @@ std::filesystem::path migration_directory(const char* executable) {
   return KC_SOURCE_MIGRATIONS_DIR;
 }
 
+/// Build the stable machine-readable response for a successful `kc init`.
 nlohmann::json success_json(const kc::storage::InitResult& result) {
   return {
       {"ok", true},
@@ -32,6 +35,7 @@ nlohmann::json success_json(const kc::storage::InitResult& result) {
         {"applied_migrations", result.applied_migrations}}}};
 }
 
+/// Build the common machine-readable error shape required by the CLI contract.
 nlohmann::json error_json(const std::string_view command, const std::string_view code,
                           const std::string_view message) {
   return {{"ok", false},
@@ -42,6 +46,8 @@ nlohmann::json error_json(const std::string_view command, const std::string_view
 }  // namespace
 
 int main(const int argc, char** argv) {
+  // Define the command-line interface before parsing so CLI11 can generate help
+  // and validate required subcommands consistently.
   CLI::App app{"Compile personal learning sources into a source-grounded knowledge base", "kc"};
   app.set_version_flag("--version", "kc 0.1.0");
   app.require_subcommand(1);
@@ -67,6 +73,8 @@ int main(const int argc, char** argv) {
 
   if (*init) {
     try {
+      // Initialization is deliberately offline: it only creates local files
+      // and applies SQLite migrations.
       const auto result = kc::storage::initialize_project(
           {.project_root = project,
            .vault_path = vault,

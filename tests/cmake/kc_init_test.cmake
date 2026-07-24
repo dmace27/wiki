@@ -1,8 +1,12 @@
+# This script is a black-box test: it runs the built executable exactly as a
+# user would, then checks its exit status, output contract, and created files.
 if(NOT DEFINED KC_EXE OR NOT DEFINED KC_TEST_ROOT)
   message(FATAL_ERROR "KC_EXE and KC_TEST_ROOT are required")
 endif()
 
+# Start from a known-empty project directory.
 file(REMOVE_RECURSE "${KC_TEST_ROOT}")
+# Run init again to prove it validates rather than duplicating or failing.
 execute_process(
   COMMAND "${KC_EXE}" init --project "${KC_TEST_ROOT}" --json --vault vault
   RESULT_VARIABLE init_status

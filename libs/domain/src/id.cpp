@@ -12,6 +12,11 @@ namespace {
 
 constexpr std::string_view crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
+/// Assemble the 128 raw ULID bits: 48 timestamp bits followed by 80 random bits.
+///
+/// The mutex protects the shared pseudo-random generator when IDs are created
+/// concurrently. Timestamp bytes are stored most-significant first so their
+/// encoded text sorts approximately by creation time.
 std::array<std::uint8_t, 16> make_ulid_bytes() {
   std::array<std::uint8_t, 16> bytes{};
   const auto milliseconds = static_cast<std::uint64_t>(
@@ -35,6 +40,7 @@ std::array<std::uint8_t, 16> make_ulid_bytes() {
   return bytes;
 }
 
+/// Encode 128 bits as 26 characters using Crockford's human-friendly Base32.
 std::string encode_ulid(const std::array<std::uint8_t, 16>& bytes) {
   std::string encoded(26, '0');
   std::uint32_t buffer = 0;
@@ -62,6 +68,7 @@ std::string generate_prefixed_ulid(const std::string_view prefix) {
   return std::string(prefix) + encode_ulid(make_ulid_bytes());
 }
 
+// Each wrapper chooses the documented prefix and returns a distinct C++ type.
 ProjectId generate_project_id() { return {generate_prefixed_ulid("prj_")}; }
 SourceId generate_source_id() { return {generate_prefixed_ulid("src_")}; }
 SourceVersionId generate_source_version_id() { return {generate_prefixed_ulid("ver_")}; }
@@ -71,4 +78,3 @@ ProposalId generate_proposal_id() { return {generate_prefixed_ulid("prp_")}; }
 RunId generate_run_id() { return {generate_prefixed_ulid("run_")}; }
 
 }  // namespace kc::domain
-

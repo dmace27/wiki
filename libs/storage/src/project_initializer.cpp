@@ -14,6 +14,7 @@
 namespace kc::storage {
 namespace {
 
+/// Read an existing `kc.json`, then strictly parse and validate its contract.
 domain::ProjectConfig read_config(const std::filesystem::path& path) {
   std::ifstream input(path);
   if (!input) {
@@ -34,6 +35,10 @@ domain::ProjectConfig read_config(const std::filesystem::path& path) {
   return *parsed.value;
 }
 
+/// Atomically create `kc.json` by writing a temporary sibling and renaming it.
+///
+/// Readers therefore see either the complete old file or the complete new one,
+/// never a partly written configuration.
 void write_config(const std::filesystem::path& path, const domain::ProjectConfig& config) {
   nlohmann::json document = config;
   const auto temporary = path.parent_path() /
@@ -52,6 +57,7 @@ void write_config(const std::filesystem::path& path, const domain::ProjectConfig
   std::filesystem::rename(temporary, path);
 }
 
+/// Construct the default configuration and validate user-provided vault input.
 domain::ProjectConfig new_config(const std::filesystem::path& vault_path) {
   domain::ProjectConfig config;
   config.project_id = domain::generate_project_id();
@@ -66,6 +72,9 @@ domain::ProjectConfig new_config(const std::filesystem::path& vault_path) {
   return config;
 }
 
+/// Create every directory promised by the project layout.
+///
+/// `create_directories` is idempotent, so existing directories are harmless.
 void create_project_directories(const std::filesystem::path& root, const domain::ProjectConfig& config) {
   std::filesystem::create_directories(root / config.paths.sources);
   std::filesystem::create_directories(root / config.paths.vault);
@@ -78,6 +87,7 @@ void create_project_directories(const std::filesystem::path& root, const domain:
 }  // namespace
 
 InitResult initialize_project(const InitOptions& options) {
+  // Validate required inputs before performing filesystem work.
   if (options.project_root.empty()) {
     throw StorageError("project root must not be empty");
   }
@@ -89,6 +99,8 @@ InitResult initialize_project(const InitOptions& options) {
   std::filesystem::create_directories(root);
   const auto config_path = root / "kc.json";
   const auto created = !std::filesystem::exists(config_path);
+  // An existing configuration is authoritative; a repeated `init --vault`
+  // validates the project instead of silently changing its vault location.
   auto config = created ? new_config(options.vault_path) : read_config(config_path);
 
   create_project_directories(root, config);
@@ -106,4 +118,3 @@ InitResult initialize_project(const InitOptions& options) {
 }
 
 }  // namespace kc::storage
-

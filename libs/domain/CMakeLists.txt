@@ -1,3 +1,4 @@
+# The domain library owns IDs, value types, validation, and JSON conversion.
 add_library(kc_domain STATIC
   src/id.cpp
   src/json.cpp
@@ -6,6 +7,7 @@ add_library(kc_domain STATIC
 
 add_library(kc::domain ALIAS kc_domain)
 
+# Expose public headers to consumers while keeping build/install paths portable.
 target_include_directories(
   kc_domain
   PUBLIC
@@ -18,4 +20,3 @@ target_link_libraries(
   PUBLIC nlohmann_json::nlohmann_json
   PRIVATE kc_project_options
 )
-

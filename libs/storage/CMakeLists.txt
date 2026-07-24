@@ -1,3 +1,4 @@
+# The storage library owns SQLite access, migrations, and project initialization.
 add_library(kc_storage STATIC
   src/database.cpp
   src/migration_runner.cpp
@@ -18,4 +19,3 @@ target_link_libraries(
   PUBLIC kc::domain
   PRIVATE unofficial::sqlite3::sqlite3 kc_project_options
 )
-

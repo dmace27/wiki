@@ -11,8 +11,10 @@ namespace kc::domain {
 
 template <typename Tag>
 struct Id {
+  /// The persisted text, including its prefix (for example `pg_` for a page).
   std::string value;
 
+  /// Provides equality and ordering comparisons based on `value`.
   auto operator<=>(const Id&) const = default;
 };
 
@@ -185,17 +187,24 @@ struct ValidationIssue {
 };
 
 struct ValidationResult {
+  /// All validation errors found; an empty list means the object is valid.
   std::vector<ValidationIssue> issues;
 
+  /// Reports whether validation found no problems.
   [[nodiscard]] bool valid() const noexcept { return issues.empty(); }
+  /// Allows the readable form `if (validation)`.
   explicit operator bool() const noexcept { return valid(); }
 };
 
+/// Check domain values against the invariants documented in DATA_CONTRACTS.md.
+/// Validation accumulates errors so a caller can show more than one correction
+/// to the user at a time.
 [[nodiscard]] ValidationResult validate(const ProjectConfig& config);
 [[nodiscard]] ValidationResult validate(const ExtractedPage& page);
 [[nodiscard]] ValidationResult validate(const Citation& citation);
 [[nodiscard]] ValidationResult validate(const ArticleProposal& proposal);
 
+/// Convert enum values to the exact snake_case strings used by JSON and SQLite.
 [[nodiscard]] std::string_view to_string(SourceKind value);
 [[nodiscard]] std::string_view to_string(TextStatus value);
 [[nodiscard]] std::string_view to_string(ProposalOperation value);
@@ -204,4 +213,3 @@ struct ValidationResult {
 [[nodiscard]] std::string_view to_string(BlockKind value);
 
 }  // namespace kc::domain
-

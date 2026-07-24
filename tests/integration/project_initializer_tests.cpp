@@ -6,6 +6,7 @@
 
 #include <filesystem>
 
+// Initialization should create the full local layout and be safe to repeat.
 TEST_CASE("project initialization is offline and idempotent") {
   kc::test::TemporaryDirectory temporary;
   const kc::storage::InitOptions options{
@@ -28,6 +29,7 @@ TEST_CASE("project initialization is offline and idempotent") {
   CHECK(std::filesystem::is_directory(options.project_root / ".knowledge-compiler/pages"));
 }
 
+// Project-relative paths prevent initialization from writing outside its root.
 TEST_CASE("project initialization rejects paths outside the project") {
   kc::test::TemporaryDirectory temporary;
   const kc::storage::InitOptions options{

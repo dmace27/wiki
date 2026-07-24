@@ -1,3 +1,4 @@
+# Build the user-facing `kc` command from its single entry point.
 add_executable(kc main.cpp)
 
 target_link_libraries(
@@ -8,6 +9,7 @@ target_link_libraries(
     kc_project_options
 )
 
+# Embed development and installation migration locations in the executable.
 target_compile_definitions(
   kc
   PRIVATE

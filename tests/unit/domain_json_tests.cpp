@@ -14,6 +14,8 @@ const std::filesystem::path fixtures = KC_TEST_FIXTURES_DIR;
 
 }  // namespace
 
+// The example files in tests/fixtures are executable documentation: each must
+// parse into its matching strongly typed C++ value.
 TEST_CASE("documented JSON fixtures parse into validated domain values") {
   const auto config = kc::domain::parse_project_config(
       kc::test::read_json(fixtures / "project-config.valid.json"));
@@ -32,6 +34,7 @@ TEST_CASE("documented JSON fixtures parse into validated domain values") {
   CHECK(proposal.value->sections.front().blocks.front().citations.size() == 1U);
 }
 
+// Serialization must preserve every field required by the public contract.
 TEST_CASE("domain JSON round trips without losing contract fields") {
   const auto original_document = kc::test::read_json(fixtures / "article-proposal.valid.json");
   const auto parsed = kc::domain::parse_article_proposal(original_document);
@@ -42,6 +45,8 @@ TEST_CASE("domain JSON round trips without losing contract fields") {
   CHECK(kc::domain::parse_article_proposal(serialized).valid());
 }
 
+// Strict parsing is a security boundary between model output and application
+// behavior; unknown keys and arbitrary operations must be rejected.
 TEST_CASE("strict parsing rejects arbitrary model operations and properties") {
   auto document = kc::test::read_json(fixtures / "article-proposal.valid.json");
   document["path"] = "vault/Markov Chains.md";
@@ -52,6 +57,7 @@ TEST_CASE("strict parsing rejects arbitrary model operations and properties") {
   CHECK_FALSE(kc::domain::parse_article_proposal(document).valid());
 }
 
+// Generated prose without evidence violates the product's provenance promise.
 TEST_CASE("every generated block requires a citation") {
   auto document = kc::test::read_json(fixtures / "article-proposal.valid.json");
   document["sections"][0]["blocks"][0]["citations"] = nlohmann::json::array();
@@ -60,6 +66,7 @@ TEST_CASE("every generated block requires a citation") {
   REQUIRE_FALSE(parsed.issues.empty());
 }
 
+// Persisted paths must remain portable and confined to the project directory.
 TEST_CASE("project paths cannot escape the project root") {
   auto document = kc::test::read_json(fixtures / "project-config.valid.json");
   document["paths"]["state"] = "../state.sqlite";

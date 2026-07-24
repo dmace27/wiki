@@ -22,6 +22,7 @@ struct Migration {
   std::filesystem::path path;
 };
 
+/// Read a complete SQL migration into memory for execution as one script.
 std::string read_file(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
   if (!input) {
@@ -30,6 +31,7 @@ std::string read_file(const std::filesystem::path& path) {
   return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
+/// Format the current time as the project's UTC RFC 3339 timestamp.
 std::string utc_now() {
   const auto now = std::chrono::system_clock::now();
   const auto time = std::chrono::system_clock::to_time_t(now);
@@ -44,6 +46,8 @@ std::string utc_now() {
   return output.str();
 }
 
+/// Find valid `NUMBER_name.sql` files, reject duplicate version numbers, and
+/// return them sorted in installation order.
 std::vector<Migration> discover(const std::filesystem::path& directory) {
   if (!std::filesystem::is_directory(directory)) {
     throw StorageError("migration directory does not exist: " + directory.string());
@@ -71,11 +75,13 @@ std::vector<Migration> discover(const std::filesystem::path& directory) {
   return migrations;
 }
 
+/// Determine whether the first migration has created its bookkeeping table.
 bool has_migration_table(Database& database) {
   return database.scalar_integer(
              "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations';") == 1;
 }
 
+/// Load the migration version numbers already recorded in the database.
 std::set<int> applied_versions(Database& database) {
   std::set<int> versions;
   if (!has_migration_table(database)) {
@@ -94,6 +100,7 @@ std::set<int> applied_versions(Database& database) {
   return versions;
 }
 
+/// Insert a successful version and its application time into migration history.
 void record_migration(Database& database, const int version) {
   sqlite3_stmt* statement = nullptr;
   constexpr auto sql = "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)";
@@ -116,6 +123,8 @@ MigrationRunner::MigrationRunner(Database& database, std::filesystem::path migra
     : database_(database), migration_directory_(std::move(migration_directory)) {}
 
 MigrationResult MigrationRunner::apply_all() {
+  // Foreign keys are connection-local. WAL improves reliability for future
+  // readers while a writer updates project state.
   database_.execute("PRAGMA foreign_keys = ON;");
   database_.execute("PRAGMA journal_mode = WAL;");
 
@@ -130,6 +139,8 @@ MigrationResult MigrationRunner::apply_all() {
 
     database_.execute("BEGIN IMMEDIATE;");
     try {
+      // The schema change and its history row commit together. This prevents a
+      // half-applied migration from being mistaken for a successful one.
       database_.execute(read_file(migration.path));
       record_migration(database_, migration.version);
       database_.execute("COMMIT;");
@@ -139,6 +150,7 @@ MigrationResult MigrationRunner::apply_all() {
       try {
         database_.execute("ROLLBACK;");
       } catch (...) {
+        // Preserve the original migration error; a rollback error is secondary.
       }
       throw;
     }
@@ -147,4 +159,3 @@ MigrationResult MigrationRunner::apply_all() {
 }
 
 }  // namespace kc::storage
-

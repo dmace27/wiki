@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <fstream>
 
+// Verifies the happy path and the key promise that applied migrations are not
+// run a second time.
 TEST_CASE("initial migration creates the documented database and is idempotent") {
   kc::test::TemporaryDirectory temporary;
   const auto database_path = temporary.path() / "state.sqlite";
@@ -28,6 +30,7 @@ TEST_CASE("initial migration creates the documented database and is idempotent")
   CHECK(database.scalar_text("PRAGMA journal_mode;") == "wal");
 }
 
+// A deliberately invalid second script proves that each migration is atomic.
 TEST_CASE("a failing migration rolls back its partial changes") {
   kc::test::TemporaryDirectory temporary;
   const auto migration_directory = temporary.path() / "migrations";

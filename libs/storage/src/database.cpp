@@ -9,10 +9,15 @@
 namespace kc::storage {
 namespace {
 
+/// Add SQLite's connection-specific diagnostic to a description of the action.
 std::string error_message(sqlite3* connection, const std::string_view action) {
   return std::string(action) + ": " + (connection == nullptr ? "unknown SQLite error" : sqlite3_errmsg(connection));
 }
 
+/// RAII wrapper for a prepared SQLite statement.
+///
+/// Preparation happens in the constructor and `sqlite3_finalize` always runs
+/// in the destructor, including when stepping the query throws.
 class Statement {
  public:
   Statement(sqlite3* connection, const std::string_view sql) : connection_(connection) {
@@ -36,6 +41,7 @@ class Statement {
 }  // namespace
 
 Database::Database(const std::filesystem::path& path) {
+  // FULLMUTEX asks SQLite to serialize use of this connection across threads.
   const auto filename = path.string();
   const auto flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
   if (sqlite3_open_v2(filename.c_str(), &connection_, flags, nullptr) != SQLITE_OK) {
@@ -57,6 +63,8 @@ Database::~Database() {
 Database::Database(Database&& other) noexcept : connection_(std::exchange(other.connection_, nullptr)) {}
 
 Database& Database::operator=(Database&& other) noexcept {
+  // Close any connection currently owned by the destination before taking the
+  // source connection. `exchange` leaves `other` safe to destroy.
   if (this != &other) {
     if (connection_ != nullptr) {
       sqlite3_close(connection_);
@@ -79,6 +87,7 @@ void Database::execute(const std::string_view sql) {
 }
 
 std::int64_t Database::scalar_integer(const std::string_view sql) const {
+  // A scalar query is expected to produce at least one row and one column.
   Statement statement(connection_, sql);
   if (sqlite3_step(statement.get()) != SQLITE_ROW) {
     throw StorageError(error_message(connection_, "SQLite query returned no row"));
@@ -96,4 +105,3 @@ std::string Database::scalar_text(const std::string_view sql) const {
 }
 
 }  // namespace kc::storage
-

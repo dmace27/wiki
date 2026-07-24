@@ -15,12 +15,16 @@ namespace {
 
 using Json = nlohmann::json;
 
+/// Reject a value unless it is a JSON object.
 void require_object(const Json& document, const std::string_view path) {
   if (!document.is_object()) {
     throw std::invalid_argument(std::string(path) + " must be an object");
   }
 }
 
+/// Enforce both required keys and the "no additional properties" contract.
+///
+/// `path` is included in errors so a beginner can locate the bad nested value.
 void require_keys(const Json& document,
                   const std::initializer_list<std::string_view> required,
                   const std::initializer_list<std::string_view> optional,
@@ -42,6 +46,7 @@ void require_keys(const Json& document,
 }
 
 template <typename Enum>
+/// Convert one of the allowed JSON strings into its C++ enum value.
 Enum parse_enum(const Json& document,
                 const std::initializer_list<std::pair<std::string_view, Enum>> choices,
                 const std::string_view path) {
@@ -56,6 +61,7 @@ Enum parse_enum(const Json& document,
   return found->second;
 }
 
+/// Read a JSON string as a filesystem path while preserving it as a value type.
 std::filesystem::path parse_path(const Json& document, const std::string_view path) {
   if (!document.is_string()) {
     throw std::invalid_argument(std::string(path) + " must be a string");
@@ -63,6 +69,7 @@ std::filesystem::path parse_path(const Json& document, const std::string_view pa
   return std::filesystem::path(document.get<std::string>());
 }
 
+/// Parse the fields shared by top-level and nested citation objects.
 Citation parse_citation_value(const Json& document, const std::string_view path) {
   require_keys(document, {"page_id", "start_char", "end_char", "quote"}, {}, path);
   Citation value;
@@ -74,6 +81,8 @@ Citation parse_citation_value(const Json& document, const std::string_view path)
 }
 
 template <typename T, typename Parser>
+/// Run structural parsing followed by semantic validation without leaking
+/// parsing exceptions across the public API.
 ParseResult<T> parse_document(const Json& document, Parser&& parser) {
   ParseResult<T> result;
   try {
@@ -90,6 +99,7 @@ ParseResult<T> parse_document(const Json& document, Parser&& parser) {
   return result;
 }
 
+/// Serialize a citation; kept in one helper so nested copies stay identical.
 Json citation_json(const Citation& value) {
   return Json{{"page_id", value.page_id.value},
               {"start_char", value.start_char},
@@ -100,6 +110,8 @@ Json citation_json(const Citation& value) {
 }  // namespace
 
 void from_json(const Json& document, ProjectConfig& value) {
+  // Parse one nesting level at a time. This makes strict key checks and error
+  // paths correspond directly to the documented configuration structure.
   require_keys(document, {"schema_version", "project_id", "paths", "vault", "providers"}, {}, "");
   value.schema_version = document.at("schema_version").get<std::uint32_t>();
   value.project_id = {document.at("project_id").get<std::string>()};
@@ -134,6 +146,8 @@ void from_json(const Json& document, ProjectConfig& value) {
 }
 
 void to_json(Json& document, const ProjectConfig& value) {
+  // `generic_string()` always uses forward slashes, keeping project files
+  // portable between Windows, macOS, and Linux.
   document = Json{
       {"schema_version", value.schema_version},
       {"project_id", value.project_id.value},
@@ -197,6 +211,8 @@ void from_json(const Json& document, Citation& value) { value = parse_citation_v
 void to_json(Json& document, const Citation& value) { document = citation_json(value); }
 
 void from_json(const Json& document, ArticleProposal& value) {
+  // Proposals are deeply nested, so every array element gets an indexed path
+  // such as /sections/0/blocks/1 for actionable validation messages.
   require_keys(document,
                {"schema_version", "operation", "article", "sections", "related_concepts"}, {}, "");
   value.schema_version = document.at("schema_version").get<std::uint32_t>();
@@ -328,6 +344,7 @@ void to_json(Json& document, const ArticleProposal& value) {
 }
 
 ParseResult<ProjectConfig> parse_project_config(const Json& document) {
+  // nlohmann/json finds `from_json` by argument-dependent lookup.
   return parse_document<ProjectConfig>(document, [](const Json& value) { return value.get<ProjectConfig>(); });
 }
 

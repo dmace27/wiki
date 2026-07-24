@@ -10,11 +10,13 @@ namespace {
 
 constexpr std::string_view ulid_pattern = "[0-9A-HJKMNP-TV-Z]{26}";
 
+/// Check both the object-specific prefix and the 26-character ULID body.
 bool has_valid_id(const std::string& value, const std::string_view prefix) {
   const std::regex pattern("^" + std::string(prefix) + std::string(ulid_pattern) + "$");
   return std::regex_match(value, pattern);
 }
 
+/// Return true only for non-empty relative paths that cannot climb to a parent.
 bool is_project_relative(const std::filesystem::path& path) {
   if (path.empty() || path.is_absolute()) {
     return false;
@@ -22,6 +24,7 @@ bool is_project_relative(const std::filesystem::path& path) {
   return std::ranges::none_of(path, [](const auto& part) { return part == ".."; });
 }
 
+/// Merge nested validation errors while prefixing their paths with the parent.
 void append(ValidationResult& target, ValidationResult source, const std::string& prefix) {
   for (auto& issue : source.issues) {
     issue.path = prefix + issue.path;
@@ -29,6 +32,7 @@ void append(ValidationResult& target, ValidationResult source, const std::string
   }
 }
 
+/// Add one issue when an invariant is false.
 void require(bool condition, ValidationResult& result, std::string path, std::string message) {
   if (!condition) {
     result.issues.push_back({std::move(path), std::move(message)});
@@ -38,6 +42,8 @@ void require(bool condition, ValidationResult& result, std::string path, std::st
 }  // namespace
 
 ValidationResult validate(const ProjectConfig& config) {
+  // Accumulate all independent configuration errors in a single pass so users
+  // do not have to fix and rerun once per field.
   ValidationResult result;
   require(config.schema_version == 1U, result, "/schema_version", "must equal 1");
   require(has_valid_id(config.project_id.value, "prj_"), result, "/project_id", "must be a prj_ ULID");
@@ -77,6 +83,8 @@ ValidationResult validate(const Citation& citation) {
 }
 
 ValidationResult validate(const ArticleProposal& proposal) {
+  // Structural parsing has already checked JSON shapes. These checks enforce
+  // semantic rules such as safe slugs, unique aliases, and cited content.
   ValidationResult result;
   require(proposal.schema_version == 1U, result, "/schema_version", "must equal 1");
   require(!proposal.article.title.empty(), result, "/article/title", "must not be empty");
@@ -117,6 +125,7 @@ ValidationResult validate(const ArticleProposal& proposal) {
 }
 
 std::string_view to_string(const SourceKind value) {
+  // Returning string_view avoids allocating because every result is a literal.
   switch (value) {
     case SourceKind::pdf: return "pdf";
     case SourceKind::markdown: return "markdown";
