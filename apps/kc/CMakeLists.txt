@@ -5,6 +5,7 @@ target_link_libraries(
   kc
   PRIVATE
     CLI11::CLI11
+    kc::import
     kc::storage
     kc_project_options
 )

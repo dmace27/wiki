@@ -9,13 +9,13 @@
 
 namespace kc::domain {
 
-template <typename Tag>
-struct Id {
-  /// The persisted text, including its prefix (for example `pg_` for a page).
-  std::string value;
+  template <typename Tag>
+  struct Id {
+    /// The persisted text, including its prefix (for example `pg_` for a page).
+    std::string value;
 
-  /// Provides equality and ordering comparisons based on `value`.
-  auto operator<=>(const Id&) const = default;
+    /// Provides equality and ordering comparisons based on `value`.
+    auto operator<=>(const Id&) const = default;
 };
 
 struct ProjectIdTag;

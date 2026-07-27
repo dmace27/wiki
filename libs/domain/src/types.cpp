@@ -54,8 +54,7 @@ ValidationResult validate(const ProjectConfig& config) {
   require(is_project_relative(config.vault.source_directory), result, "/vault/source_directory", "must be relative to the vault");
   require(!config.vault.generated_section_id.empty(), result, "/vault/generated_section_id", "must not be empty");
   require(!config.providers.llm.default_provider.empty(), result, "/providers/llm/default", "must not be empty");
-  require(!config.providers.llm.ollama.base_url.empty(), result, "/providers/llm/ollama/base_url", "must not be empty");
-  require(!config.providers.llm.ollama.model.empty(), result, "/providers/llm/ollama/model", "must not be empty");
+  require(!config.providers.llm.ollama.base_url.empty(), result, "/providers/llm/ollama/base_url", "must not be empty"); require(!config.providers.llm.ollama.model.empty(), result, "/providers/llm/ollama/model", "must not be empty");
   require(config.providers.llm.ollama.timeout_seconds > 0U, result, "/providers/llm/ollama/timeout_seconds", "must be positive");
   require(!config.providers.ocr.default_provider.empty(), result, "/providers/ocr/default", "must not be empty");
   require(!config.providers.ocr.language.empty(), result, "/providers/ocr/language", "must not be empty");

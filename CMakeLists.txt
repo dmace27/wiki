@@ -33,6 +33,7 @@ find_package(unofficial-sqlite3 CONFIG REQUIRED)
 # Build each layer after its third-party dependencies are available.
 add_subdirectory(libs/domain)
 add_subdirectory(libs/storage)
+add_subdirectory(libs/import)
 add_subdirectory(apps/kc)
 
 if(BUILD_TESTING)

@@ -31,3 +31,14 @@ Initialize a project without starting Ollama or Tesseract:
 
 The command creates `kc.json`, project-local storage directories, and applies
 all pending SQLite migrations transactionally.
+
+Import Markdown, text, or PDF sources from the project directory (or pass
+`--project` explicitly):
+
+```bash
+./build/dev/apps/kc/kc import "./Probability Notes Week 8.pdf"
+```
+
+Each import is SHA-256 hashed and copied into immutable project-local storage.
+Re-importing unchanged bytes is idempotent; changed content creates a new source
+version without overwriting the earlier retained file.
