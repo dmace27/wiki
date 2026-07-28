@@ -25,6 +25,9 @@ TEST_CASE("SHA-256 matches standard test vectors") {
   CHECK(kc::source_import::sha256_file(abc_path) ==
         "ba7816bf8f01cfea414140de5dae2223"
         "b00361a396177a9cb410ff61f20015ad");
+  CHECK(kc::source_import::sha256_text("abc") ==
+        "ba7816bf8f01cfea414140de5dae2223"
+        "b00361a396177a9cb410ff61f20015ad");
   CHECK(kc::source_import::sha256_file(multi_block_path) ==
         "248d6a61d20638b8e5c026930c3e6039"
         "a33ce45964ff2167f6ecedd419db06c1");

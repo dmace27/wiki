@@ -34,6 +34,7 @@ find_package(unofficial-sqlite3 CONFIG REQUIRED)
 add_subdirectory(libs/domain)
 add_subdirectory(libs/storage)
 add_subdirectory(libs/import)
+add_subdirectory(libs/extraction)
 add_subdirectory(apps/kc)
 
 if(BUILD_TESTING)

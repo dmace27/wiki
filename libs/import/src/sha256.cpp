@@ -154,4 +154,10 @@ std::string sha256_file(const std::filesystem::path& path) {
   return hasher.finish();
 }
 
+std::string sha256_text(const std::string_view text) {
+  Sha256 hasher;
+  hasher.update(std::as_bytes(std::span(text.data(), text.size())));
+  return hasher.finish();
+}
+
 }  // namespace kc::source_import

@@ -1,3 +1,4 @@
+#include "kc/extraction/extractor.hpp"
 #include "kc/import/source_importer.hpp"
 #include "kc/storage/project_initializer.hpp"
 
@@ -85,6 +86,52 @@ nlohmann::json import_success_json(
           {"result", {{"sources", std::move(imported)}}}};
 }
 
+/// Build the machine-readable page extraction result.
+nlohmann::json extraction_success_json(
+    const kc::extraction::ExtractionResult& result) {
+  auto pages = nlohmann::json::array();
+  for (const auto& page : result.pages) {
+    nlohmann::json image_path = nullptr;
+    if (page.image_path) {
+      image_path = page.image_path->generic_string();
+    }
+    pages.push_back(
+        {{"page_id", page.page_id.value},
+         {"page_number", page.page_number},
+         {"image_path", std::move(image_path)},
+         {"text", page.text},
+         {"text_status", kc::domain::to_string(page.text_status)}});
+  }
+  return {
+      {"ok", true},
+      {"command", "extract"},
+      {"result",
+       {{"source_id", result.source_id.value},
+        {"source_version_id", result.source_version_id.value},
+        {"run_id", result.run_id.value.empty()
+                       ? nlohmann::json(nullptr)
+                       : nlohmann::json(result.run_id.value)},
+        {"page_count", result.pages.size()},
+        {"failed_pages", result.failed_pages},
+        {"reused", result.reused},
+        {"pages", std::move(pages)}}}};
+}
+
+/// Report durable failed page rows while retaining the CLI error contract.
+nlohmann::json extraction_failure_json(
+    const kc::extraction::ExtractionResult& result) {
+  return {
+      {"ok", false},
+      {"command", "extract"},
+      {"error",
+       {{"code", "ocr_failed"},
+        {"message", "OCR failed or produced unusable text for one or more pages"},
+        {"source_id", result.source_id.value},
+        {"source_version_id", result.source_version_id.value},
+        {"failed_pages", result.failed_pages},
+        {"page_count", result.pages.size()}}}};
+}
+
 }  // namespace
 
 int main(const int argc, char** argv) {
@@ -113,6 +160,16 @@ int main(const int argc, char** argv) {
   import_command->add_option("FILE", source_files, "Markdown, text, or PDF source file")
       ->required()
       ->expected(-1);
+
+  auto* extract_command =
+      app.add_subcommand("extract", "Extract page text and retain PDF page images");
+  extract_command->fallthrough();
+  std::string extract_source_id;
+  bool force_extraction = false;
+  extract_command->add_option("SOURCE_ID", extract_source_id, "Imported source ID")
+      ->required();
+  extract_command->add_flag(
+      "--force", force_extraction, "Replace existing extraction state");
 
   // Parsing the CLI inputs
   try {
@@ -207,6 +264,75 @@ int main(const int argc, char** argv) {
                   << '\n';
       } else {
         std::cerr << "kc import: unexpected error: " << error.what() << '\n';
+      }
+      return 6;
+    }
+  }
+
+  if (*extract_command) {
+    try {
+      if (project_option->count() == 0U) {
+        const auto discovered =
+            find_project_root(std::filesystem::current_path());
+        if (!discovered) {
+          throw kc::extraction::ExtractionError(
+              kc::extraction::ExtractionErrorKind::invalid_project,
+              "no kc.json found in the current directory or its parents; run 'kc init' first");
+        }
+        project = *discovered;
+      }
+
+      kc::extraction::Extractor extractor(project);
+      const auto result = extractor.extract(
+          kc::domain::SourceId{extract_source_id}, force_extraction);
+      if (result.failed_pages != 0U) {
+        if (json_output) {
+          std::cout << extraction_failure_json(result).dump() << '\n';
+        } else {
+          std::cerr << "kc extract: " << result.failed_pages
+                    << " page(s) failed OCR; failed page state was retained\n";
+        }
+        return 4;
+      }
+
+      if (json_output) {
+        std::cout << extraction_success_json(result).dump() << '\n';
+      } else if (!quiet) {
+        std::cout << (result.reused ? "Found " : "Extracted ")
+                  << result.pages.size() << " page(s) for "
+                  << result.source_id.value << '\n';
+      }
+      return 0;
+    } catch (const kc::extraction::ExtractionError& error) {
+      const auto kind = error.kind();
+      const auto exit_code =
+          kind == kc::extraction::ExtractionErrorKind::invalid_project
+              ? 2
+              : kind == kc::extraction::ExtractionErrorKind::source_not_found
+                    ? 3
+                    : kind == kc::extraction::ExtractionErrorKind::adapter_error
+                          ? 4
+                          : 6;
+      const auto code =
+          kind == kc::extraction::ExtractionErrorKind::invalid_project
+              ? "invalid_project"
+              : kind == kc::extraction::ExtractionErrorKind::source_not_found
+                    ? "source_not_found"
+                    : kind == kc::extraction::ExtractionErrorKind::adapter_error
+                          ? "adapter_failed"
+                          : "state_error";
+      if (json_output) {
+        std::cout << error_json("extract", code, error.what()).dump() << '\n';
+      } else {
+        std::cerr << "kc extract: " << error.what() << '\n';
+      }
+      return exit_code;
+    } catch (const std::exception& error) {
+      if (json_output) {
+        std::cout << error_json("extract", "internal_error", error.what()).dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc extract: unexpected error: " << error.what() << '\n';
       }
       return 6;
     }

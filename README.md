@@ -42,3 +42,15 @@ Import Markdown, text, or PDF sources from the project directory (or pass
 Each import is SHA-256 hashed and copied into immutable project-local storage.
 Re-importing unchanged bytes is idempotent; changed content creates a new source
 version without overwriting the earlier retained file.
+
+Extract the latest immutable version using the source ID returned by import:
+
+```bash
+./build/dev/apps/kc/kc extract src_01J...
+```
+
+Markdown and TXT sources produce one native logical page. PDF extraction uses
+the local `pdftoppm` and `pdftotext` programs, retains a PNG for every page, and
+falls back to local Tesseract OCR when native text is unusable. Install those
+programs on `PATH` to process PDFs; project initialization does not require
+them. Use `--force` to retry an existing extraction.
