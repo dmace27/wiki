@@ -54,3 +54,9 @@ the local `pdftoppm` and `pdftotext` programs, retains a PNG for every page, and
 falls back to local Tesseract OCR when native text is unusable. Install those
 programs on `PATH` to process PDFs; project initialization does not require
 them. Use `--force` to retry an existing extraction.
+
+The local model layer uses the Ollama settings in `kc.json` to request a
+schema-constrained Markov Chains proposal. It validates all returned citations
+against supplied page text and records a redacted `model_runs` audit entry.
+This library stage does not create pending proposals or write vault files;
+those operations remain approval-gated later stages.

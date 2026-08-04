@@ -4,12 +4,14 @@ find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
 # Compile all Catch2 test cases into one test executable.
 add_executable(kc_tests
   integration/extractor_tests.cpp
+  integration/model_runner_tests.cpp
   integration/source_importer_tests.cpp
   integration/migration_runner_tests.cpp
   integration/project_initializer_tests.cpp
   unit/domain_json_tests.cpp
   unit/extraction_adapter_tests.cpp
   unit/id_tests.cpp
+  unit/proposal_validator_tests.cpp
   unit/schema_fixture_tests.cpp
   unit/sha256_tests.cpp
 )
@@ -20,6 +22,7 @@ target_link_libraries(
     Catch2::Catch2WithMain
     kc::extraction
     kc::import
+    kc::models
     kc::storage
     nlohmann_json_schema_validator::validator
     kc_project_options

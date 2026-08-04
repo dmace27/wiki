@@ -177,3 +177,9 @@ CREATE VIRTUAL TABLE article_fts USING fts5(
 - `article_citations` are replaced transactionally with a successful apply.
 - An imported source is never overwritten. New content means a new
   `source_versions` row and new page rows.
+- A completed model run stores only its strictly validated proposal JSON.
+  Invalid model output is replaced by a redacted SHA-256/size diagnostic;
+  transport error bodies, prompts, evidence text, URLs, and headers are not
+  persisted in `model_runs`.
+- Step 1C writes `model_runs` only. A pending `proposals` row is created later
+  and transactionally by the compiler after all compiler-level checks pass.

@@ -110,6 +110,12 @@ Validation requirements:
 3. The whitespace-normalized page substring and `quote` must match.
 4. Each generated block must contain at least one valid citation.
 
+The local model boundary treats offsets as byte offsets into the UTF-8 string
+stored in SQLite. A model response is `invalid_response` when its JSON shape is
+invalid, a citation references a page outside the supplied evidence, an offset
+is out of bounds, or its whitespace-normalized quote does not match the page
+substring. Invalid output never becomes a proposal.
+
 ## Article proposal schema
 
 The LLM returns this proposal. It cannot request paths, Markdown, commands, or

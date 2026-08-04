@@ -27,7 +27,7 @@ and the domain types defined in the documentation set.
 
 **Owner:** import/state agent
 
-Implement Markdown, TXT, and PDF registration, SHA-256 hashing, deduplication,
+mplement Markdown, TXT, and PDF registration, SHA-256 hashing, deduplication,
 and source-version storage.
 
 **Acceptance criteria**

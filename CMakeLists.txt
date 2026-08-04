@@ -27,6 +27,7 @@ if(KC_ENABLE_SANITIZERS)
 endif()
 
 find_package(CLI11 CONFIG REQUIRED)
+find_package(CURL REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 
@@ -35,6 +36,7 @@ add_subdirectory(libs/domain)
 add_subdirectory(libs/storage)
 add_subdirectory(libs/import)
 add_subdirectory(libs/extraction)
+add_subdirectory(libs/models)
 add_subdirectory(apps/kc)
 
 if(BUILD_TESTING)
