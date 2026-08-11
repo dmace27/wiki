@@ -1,5 +1,4 @@
 # Architecture
-
 ## Technical decision
 
 Build the compiler as a **C++23 and CMake** application. This supports a

@@ -1,3 +1,4 @@
+#include "kc/compiler/compiler.hpp"
 #include "kc/extraction/extractor.hpp"
 #include "kc/import/source_importer.hpp"
 #include "kc/storage/project_initializer.hpp"
@@ -132,6 +133,66 @@ nlohmann::json extraction_failure_json(
         {"page_count", result.pages.size()}}}};
 }
 
+/// Build the machine-readable result for a committed pending proposal.
+nlohmann::json compile_success_json(
+    const kc::compiler::CompileResult& result) {
+  nlohmann::json article_id = nullptr;
+  if (result.article_id) {
+    article_id = result.article_id->value;
+  }
+  return {
+      {"ok", true},
+      {"command", "compile"},
+      {"result",
+       {{"proposal_id", result.proposal_id.value},
+        {"model_run_id", result.model_run_id.value},
+        {"operation", kc::domain::to_string(result.operation)},
+        {"article_id", std::move(article_id)},
+        {"selected_page_count", result.selected_page_count},
+        {"status", "pending"}}}};
+}
+
+/// Map compiler failures to the stable process exits in CLI_CONTRACT.md.
+int compiler_exit_code(const kc::compiler::CompilerErrorKind kind) {
+  switch (kind) {
+    case kc::compiler::CompilerErrorKind::invalid_project:
+    case kc::compiler::CompilerErrorKind::unsupported_concept:
+      return 2;
+    case kc::compiler::CompilerErrorKind::source_not_found:
+    case kc::compiler::CompilerErrorKind::no_evidence:
+      return 3;
+    case kc::compiler::CompilerErrorKind::model_failed:
+      return 4;
+    case kc::compiler::CompilerErrorKind::validation_failed:
+      return 5;
+    case kc::compiler::CompilerErrorKind::state_error:
+      return 6;
+  }
+  return 6;
+}
+
+/// Map compiler failures to the machine-readable CLI error vocabulary.
+std::string_view compiler_error_code(
+    const kc::compiler::CompilerErrorKind kind) {
+  switch (kind) {
+    case kc::compiler::CompilerErrorKind::invalid_project:
+      return "invalid_project";
+    case kc::compiler::CompilerErrorKind::unsupported_concept:
+      return "unsupported_concept";
+    case kc::compiler::CompilerErrorKind::source_not_found:
+      return "source_not_found";
+    case kc::compiler::CompilerErrorKind::no_evidence:
+      return "no_evidence";
+    case kc::compiler::CompilerErrorKind::model_failed:
+      return "model_failed";
+    case kc::compiler::CompilerErrorKind::validation_failed:
+      return "validation_failed";
+    case kc::compiler::CompilerErrorKind::state_error:
+      return "state_error";
+  }
+  return "state_error";
+}
+
 }  // namespace
 
 int main(const int argc, char** argv) {
@@ -170,6 +231,18 @@ int main(const int argc, char** argv) {
       ->required();
   extract_command->add_flag(
       "--force", force_extraction, "Replace existing extraction state");
+
+  auto* compile_command = app.add_subcommand(
+      "compile", "Select evidence and create a validated pending proposal");
+  compile_command->fallthrough();
+  std::string concept_title;
+  std::vector<std::string> compile_source_ids;
+  compile_command->add_option("--concept", concept_title, "Concept title")
+      ->required();
+  compile_command
+      ->add_option("--source", compile_source_ids,
+                   "Restrict evidence to one or more imported source IDs")
+      ->expected(-1);
 
   // Parsing the CLI inputs
   try {
@@ -333,6 +406,57 @@ int main(const int argc, char** argv) {
                   << '\n';
       } else {
         std::cerr << "kc extract: unexpected error: " << error.what() << '\n';
+      }
+      return 6;
+    }
+  }
+
+  if (*compile_command) {
+    try {
+      if (project_option->count() == 0U) {
+        const auto discovered =
+            find_project_root(std::filesystem::current_path());
+        if (!discovered) {
+          throw kc::compiler::CompilerError(
+              kc::compiler::CompilerErrorKind::invalid_project,
+              "no kc.json found in the current directory or its parents; "
+              "run 'kc init' first");
+        }
+        project = *discovered;
+      }
+
+      kc::compiler::CompileOptions options{.concept_title = concept_title};
+      options.source_ids.reserve(compile_source_ids.size());
+      for (auto& source_id : compile_source_ids) {
+        options.source_ids.push_back({std::move(source_id)});
+      }
+      kc::compiler::Compiler compiler(project);
+      const auto result = compiler.compile(options);
+      if (json_output) {
+        std::cout << compile_success_json(result).dump() << '\n';
+      } else if (!quiet) {
+        std::cout << "Created pending proposal " << result.proposal_id.value
+                  << " from " << result.selected_page_count
+                  << " relevant page(s)\n";
+      }
+      return 0;
+    } catch (const kc::compiler::CompilerError& error) {
+      const auto kind = error.kind();
+      if (json_output) {
+        std::cout
+            << error_json("compile", compiler_error_code(kind), error.what())
+                   .dump()
+            << '\n';
+      } else {
+        std::cerr << "kc compile: " << error.what() << '\n';
+      }
+      return compiler_exit_code(kind);
+    } catch (const std::exception& error) {
+      if (json_output) {
+        std::cout << error_json("compile", "internal_error", error.what()).dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc compile: unexpected error: " << error.what() << '\n';
       }
       return 6;
     }

@@ -72,3 +72,22 @@ TEST_CASE("the MVP request rejects concepts other than Markov Chains") {
 
   CHECK_FALSE(validator.validate_request(request));
 }
+
+TEST_CASE("citation offsets are UTF-8 byte offsets") {
+  kc::models::ProposalValidator validator;
+  auto page = fixture_page();
+  page.text = "\u03c0AMarkov chain example";
+  auto proposal = fixture_proposal();
+  auto& block_citation = proposal.sections[0].blocks[0].citations[0];
+  block_citation.start_char = 3;
+  block_citation.end_char = 15;
+  block_citation.quote = "Markov chain";
+  proposal.related_concepts[0].citations[0] = block_citation;
+
+  CHECK(validator.validate_response(proposal, request_for(page)));
+
+  // A character-counted start of 2 lands on the preceding ASCII byte because
+  // the pi character occupies two UTF-8 bytes.
+  block_citation.start_char = 2;
+  CHECK_FALSE(validator.validate_response(proposal, request_for(page)));
+}

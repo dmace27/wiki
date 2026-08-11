@@ -3,6 +3,7 @@ find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
 
 # Compile all Catch2 test cases into one test executable.
 add_executable(kc_tests
+  integration/compiler_tests.cpp
   integration/extractor_tests.cpp
   integration/model_runner_tests.cpp
   integration/source_importer_tests.cpp
@@ -20,6 +21,7 @@ target_link_libraries(
   kc_tests
   PRIVATE
     Catch2::Catch2WithMain
+    kc::compiler
     kc::extraction
     kc::import
     kc::models
@@ -66,4 +68,13 @@ add_test(
       -DKC_EXE=$<TARGET_FILE:kc>
       -DKC_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-extract-project
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/kc_extract_test.cmake
+)
+
+add_test(
+  NAME kc_cli_compile
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DKC_EXE=$<TARGET_FILE:kc>
+      -DKC_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-compile-project
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/kc_compile_test.cmake
 )

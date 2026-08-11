@@ -37,6 +37,7 @@ add_subdirectory(libs/storage)
 add_subdirectory(libs/import)
 add_subdirectory(libs/extraction)
 add_subdirectory(libs/models)
+add_subdirectory(libs/compiler)
 add_subdirectory(apps/kc)
 
 if(BUILD_TESTING)

@@ -58,5 +58,14 @@ them. Use `--force` to retry an existing extraction.
 The local model layer uses the Ollama settings in `kc.json` to request a
 schema-constrained Markov Chains proposal. It validates all returned citations
 against supplied page text and records a redacted `model_runs` audit entry.
-This library stage does not create pending proposals or write vault files;
-those operations remain approval-gated later stages.
+Compile relevant extracted pages into a pending proposal with:
+
+```bash
+./build/dev/apps/kc/kc compile --concept "Markov Chains"
+```
+
+Add one or more `--source src_01J...` options to restrict the evidence set.
+Compilation deterministically matches title, alias, and topic keywords, stores
+normalized citations transactionally, and never writes vault files. Invalid
+model output remains only a redacted failed model run and cannot become a
+pending proposal.
