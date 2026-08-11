@@ -108,6 +108,15 @@ domain::ValidationResult ProposalValidator::validate_request(
   for (std::size_t index = 0; index < request.pages.size(); ++index) {
     const auto path = "/pages/" + std::to_string(index);
     append_issues(result, domain::validate(request.pages[index]), path);
+    if (request.pages[index].text_status ==
+        domain::TextStatus::ocr_unreviewed) {
+      add_issue(result, path + "/text_status",
+                "OCR evidence must be reviewed before model use");
+    } else if (request.pages[index].text_status ==
+               domain::TextStatus::failed) {
+      add_issue(result, path + "/text_status",
+                "failed extraction cannot be used as model evidence");
+    }
     if (!page_ids.insert(request.pages[index].page_id.value).second) {
       add_issue(result, path + "/page_id",
                 "must be unique within model evidence");

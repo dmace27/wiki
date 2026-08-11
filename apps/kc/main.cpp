@@ -3,6 +3,7 @@
 #include "kc/extraction/extractor.hpp"
 #include "kc/import/source_importer.hpp"
 #include "kc/review/review_service.hpp"
+#include "kc/search/search_index.hpp"
 #include "kc/storage/project_initializer.hpp"
 #include "kc/vault/vault_writer.hpp"
 
@@ -311,6 +312,22 @@ nlohmann::json apply_success_json(const kc::vault::ApplyResult& result) {
         {"status", "applied"}}}};
 }
 
+/// Build the machine-readable local full-text search result.
+nlohmann::json search_success_json(
+    const std::vector<kc::search::SearchResult>& results) {
+  auto matches = nlohmann::json::array();
+  for (const auto& result : results) {
+    matches.push_back({{"article_id", result.article_id.value},
+                       {"title", result.title},
+                       {"vault_path", result.vault_path.generic_string()},
+                       {"excerpt", result.excerpt},
+                       {"relevance", result.relevance}});
+  }
+  return {{"ok", true},
+          {"command", "search"},
+          {"result", {{"articles", std::move(matches)}}}};
+}
+
 /// Map compiler failures to the stable process exits in CLI_CONTRACT.md.
 int compiler_exit_code(const kc::compiler::CompilerErrorKind kind) {
   switch (kind) {
@@ -421,6 +438,31 @@ std::string_view review_error_code(const kc::review::ReviewErrorKind kind) {
     case kc::review::ReviewErrorKind::invalid_input:
       return "invalid_input";
     case kc::review::ReviewErrorKind::state_error:
+      return "state_error";
+  }
+  return "state_error";
+}
+
+/// Map search failures to the stable process exits in CLI_CONTRACT.md.
+int search_exit_code(const kc::search::SearchErrorKind kind) {
+  switch (kind) {
+    case kc::search::SearchErrorKind::invalid_project:
+    case kc::search::SearchErrorKind::invalid_query:
+      return 2;
+    case kc::search::SearchErrorKind::state_error:
+      return 6;
+  }
+  return 6;
+}
+
+/// Map search failures to the machine-readable CLI error vocabulary.
+std::string_view search_error_code(const kc::search::SearchErrorKind kind) {
+  switch (kind) {
+    case kc::search::SearchErrorKind::invalid_project:
+      return "invalid_project";
+    case kc::search::SearchErrorKind::invalid_query:
+      return "invalid_query";
+    case kc::search::SearchErrorKind::state_error:
       return "state_error";
   }
   return "state_error";
@@ -630,6 +672,18 @@ int main(const int argc, char** argv) {
       "--allow-overwrite-user-file", allow_overwrite_user_file,
       "Explicitly permit replacing an untracked colliding Markdown file");
 
+  auto* search_command = app.add_subcommand(
+      "search", "Search generated article titles, aliases, and body text");
+  search_command->fallthrough();
+  std::string search_query;
+  std::size_t search_limit = 20U;
+  search_command->add_option("QUERY", search_query, "Keyword search query")
+      ->required();
+  search_command
+      ->add_option("--limit", search_limit,
+                   "Maximum results to return (1-100)")
+      ->check(CLI::Range(1U, 100U));
+
   // Parsing the CLI inputs
   try {
     app.parse(argc, argv);
@@ -767,7 +821,8 @@ int main(const int argc, char** argv) {
       const auto exit_code =
           kind == kc::extraction::ExtractionErrorKind::invalid_project
               ? 2
-              : kind == kc::extraction::ExtractionErrorKind::source_not_found
+              : kind == kc::extraction::ExtractionErrorKind::source_not_found ||
+                        kind == kc::extraction::ExtractionErrorKind::invalid_state
                     ? 3
                     : kind == kc::extraction::ExtractionErrorKind::adapter_error
                           ? 4
@@ -777,6 +832,8 @@ int main(const int argc, char** argv) {
               ? "invalid_project"
               : kind == kc::extraction::ExtractionErrorKind::source_not_found
                     ? "source_not_found"
+                    : kind == kc::extraction::ExtractionErrorKind::invalid_state
+                          ? "invalid_state"
                     : kind == kc::extraction::ExtractionErrorKind::adapter_error
                           ? "adapter_failed"
                           : "state_error";
@@ -1171,6 +1228,60 @@ int main(const int argc, char** argv) {
                   << '\n';
       } else {
         std::cerr << "kc apply: unexpected error: " << error.what() << '\n';
+      }
+      return 6;
+    }
+  }
+
+  if (*search_command) {
+    try {
+      if (project_option->count() == 0U) {
+        const auto discovered =
+            find_project_root(std::filesystem::current_path());
+        if (!discovered) {
+          throw kc::search::SearchError(
+              kc::search::SearchErrorKind::invalid_project,
+              "no kc.json found in the current directory or its parents; "
+              "run 'kc init' first");
+        }
+        project = *discovered;
+      }
+
+      kc::search::SearchIndex index(project);
+      const auto results = index.search(search_query, search_limit);
+      if (json_output) {
+        std::cout << search_success_json(results).dump() << '\n';
+      } else if (!quiet) {
+        if (results.empty()) {
+          std::cout << "No articles found.\n";
+        }
+        for (const auto& result : results) {
+          std::cout << result.title << "\n  "
+                    << result.vault_path.generic_string() << '\n';
+          if (!result.excerpt.empty()) {
+            std::cout << "  " << result.excerpt << '\n';
+          }
+        }
+      }
+      return 0;
+    } catch (const kc::search::SearchError& error) {
+      const auto kind = error.kind();
+      if (json_output) {
+        std::cout << error_json("search", search_error_code(kind),
+                                error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc search: " << error.what() << '\n';
+      }
+      return search_exit_code(kind);
+    } catch (const std::exception& error) {
+      if (json_output) {
+        std::cout << error_json("search", "internal_error", error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc search: unexpected error: " << error.what() << '\n';
       }
       return 6;
     }

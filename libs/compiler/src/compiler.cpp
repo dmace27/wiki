@@ -420,7 +420,11 @@ class Compiler::Impl {
         }
         const auto status = parse_text_status(statement.text(5));
         const auto text = statement.text(4);
-        if (status == domain::TextStatus::failed || text.empty()) {
+        // Native extraction is usable immediately, while OCR must cross the
+        // explicit human-review boundary before any text reaches the model.
+        const auto model_ready = status == domain::TextStatus::native ||
+                                 status == domain::TextStatus::reviewed;
+        if (!model_ready || text.empty()) {
           continue;
         }
 

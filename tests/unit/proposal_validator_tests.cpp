@@ -73,6 +73,23 @@ TEST_CASE("the MVP request rejects concepts other than Markov Chains") {
   CHECK_FALSE(validator.validate_request(request));
 }
 
+TEST_CASE("model requests accept only usable extraction review states") {
+  kc::models::ProposalValidator validator;
+  auto page = fixture_page();
+
+  page.text_status = kc::domain::TextStatus::native;
+  CHECK(validator.validate_request(request_for(page)));
+
+  page.text_status = kc::domain::TextStatus::reviewed;
+  CHECK(validator.validate_request(request_for(page)));
+
+  page.text_status = kc::domain::TextStatus::ocr_unreviewed;
+  CHECK_FALSE(validator.validate_request(request_for(page)));
+
+  page.text_status = kc::domain::TextStatus::failed;
+  CHECK_FALSE(validator.validate_request(request_for(page)));
+}
+
 TEST_CASE("citation offsets are UTF-8 byte offsets") {
   kc::models::ProposalValidator validator;
   auto page = fixture_page();

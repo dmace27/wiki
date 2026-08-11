@@ -1,4 +1,5 @@
 #include "kc/extraction/extractor.hpp"
+#include "kc/domain/id.hpp"
 #include "kc/import/source_importer.hpp"
 #include "kc/storage/database.hpp"
 #include "kc/storage/project_initializer.hpp"
@@ -249,6 +250,52 @@ TEST_CASE("extraction is idempotent and force preserves stable page IDs") {
   kc::storage::Database database(initialized.state_path);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM source_pages") == 1);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM extraction_runs") == 2);
+}
+
+TEST_CASE("forced extraction cannot replace pages cited by a proposal") {
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  const auto initialized =
+      kc::storage::initialize_project(init_options(project_root));
+  const auto pdf_path = temporary.path() / "cited-native.pdf";
+  write_file(pdf_path, "%PDF fake immutable fixture");
+
+  kc::source_import::SourceImporter importer(project_root);
+  const auto imported = importer.import_file(pdf_path);
+  auto pdf = std::make_unique<FakePdfAdapter>(
+      std::vector<std::optional<std::string>>{"Usable native page text"});
+  auto* pdf_observer = pdf.get();
+  kc::extraction::Extractor extractor(
+      project_root, std::move(pdf), std::make_unique<FakeOcrProvider>());
+  const auto first = extractor.extract(imported.source.source_id);
+  REQUIRE(first.pages.size() == 1U);
+
+  kc::storage::Database database(initialized.state_path);
+  const auto proposal_id = kc::domain::generate_proposal_id();
+  database.execute(
+      "INSERT INTO proposals(proposal_id, operation, payload_json, status, "
+      "created_at) VALUES ('" +
+      proposal_id.value +
+      "', 'create_article', '{}', 'pending', '2026-08-11T12:00:00Z')");
+  database.execute(
+      "INSERT INTO proposal_citations(proposal_id, section_key, block_index, "
+      "page_id, start_char, end_char, quote) VALUES ('" +
+      proposal_id.value + "', 'working_explanation', 0, '" +
+      first.pages.front().page_id.value + "', 0, 6, 'Usable')");
+
+  try {
+    static_cast<void>(extractor.extract(imported.source.source_id, true));
+    FAIL("expected cited-page immutability failure");
+  } catch (const kc::extraction::ExtractionError& error) {
+    CHECK(error.kind() == kc::extraction::ExtractionErrorKind::invalid_state);
+  }
+
+  CHECK(pdf_observer->render_calls == 1U);
+  CHECK(database.scalar_text("SELECT text FROM source_pages") ==
+        "Usable native page text");
+  CHECK(database.scalar_text("SELECT text_status FROM source_pages") ==
+        "native");
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM extraction_runs") == 1);
 }
 
 TEST_CASE("fatal PDF rendering failures are recorded without fake page rows") {

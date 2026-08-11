@@ -4,6 +4,7 @@ find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
 # Compile all Catch2 test cases into one test executable.
 add_executable(kc_tests
   integration/compiler_tests.cpp
+  integration/end_to_end_tests.cpp
   integration/extractor_tests.cpp
   integration/model_runner_tests.cpp
   integration/source_importer_tests.cpp
@@ -11,6 +12,7 @@ add_executable(kc_tests
   integration/migration_runner_tests.cpp
   integration/project_initializer_tests.cpp
   integration/review_service_tests.cpp
+  integration/search_index_tests.cpp
   unit/domain_json_tests.cpp
   unit/extraction_adapter_tests.cpp
   unit/id_tests.cpp
@@ -28,6 +30,7 @@ target_link_libraries(
     kc::import
     kc::models
     kc::review
+    kc::search
     kc::storage
     kc::vault
     nlohmann_json_schema_validator::validator
@@ -40,6 +43,17 @@ target_compile_definitions(
     KC_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     KC_TEST_MIGRATIONS_DIR="${PROJECT_SOURCE_DIR}/migrations"
     KC_TEST_SCHEMAS_DIR="${PROJECT_SOURCE_DIR}/schemas"
+)
+
+# A tiny platform-neutral fixture helper lets the black-box CLI search test
+# populate FTS5 state without requiring an external sqlite3 command.
+add_executable(
+  kc_search_fixture_seeder
+  helpers/search_fixture_seeder.cpp
+)
+target_link_libraries(
+  kc_search_fixture_seeder
+  PRIVATE kc::storage kc_project_options
 )
 
 # Turn individual Catch2 TEST_CASE blocks into tests visible to CTest.
@@ -99,4 +113,14 @@ add_test(
       -DKC_EXE=$<TARGET_FILE:kc>
       -DKC_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-review-project
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/kc_review_test.cmake
+)
+
+add_test(
+  NAME kc_cli_search
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DKC_EXE=$<TARGET_FILE:kc>
+      -DKC_SEED_EXE=$<TARGET_FILE:kc_search_fixture_seeder>
+      -DKC_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-search-project
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/kc_search_test.cmake
 )

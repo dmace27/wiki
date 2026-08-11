@@ -157,6 +157,50 @@ TEST_CASE("compiler evidence selection is relevant, latest-only, and determinist
       kc::compiler::CompilerError);
 }
 
+TEST_CASE("unreviewed OCR cannot reach the model") {
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  const auto initialized =
+      kc::storage::initialize_project(init_options(project_root));
+  const auto imported = import_and_extract(
+      project_root, temporary.path() / "scanned-markov-notes.md",
+      "A Markov chain has the Markov property.\n");
+
+  kc::storage::Database database(initialized.state_path);
+  const auto version_id = imported.version.source_version_id.value;
+  const auto page_id = database.scalar_text(
+      "SELECT page_id FROM source_pages WHERE source_version_id = '" +
+      version_id + "'");
+  database.execute(
+      "UPDATE source_pages SET text_status = 'ocr_unreviewed' "
+      "WHERE source_version_id = '" +
+      version_id + "'");
+
+  auto state = std::make_shared<ModelState>();
+  kc::compiler::Compiler compiler(
+      project_root, std::make_unique<StaticLanguageModel>(state));
+  try {
+    static_cast<void>(compiler.compile(
+        {.source_ids = {imported.source.source_id}}));
+    FAIL("expected unreviewed OCR to produce no eligible evidence");
+  } catch (const kc::compiler::CompilerError& error) {
+    CHECK(error.kind() == kc::compiler::CompilerErrorKind::no_evidence);
+  }
+  CHECK(state->prompts.empty());
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM model_runs") == 0);
+
+  // The same extracted text becomes eligible only after explicit review.
+  database.execute(
+      "UPDATE source_pages SET text_status = 'reviewed' "
+      "WHERE source_version_id = '" +
+      version_id + "'");
+  state->response = create_proposal(page_id).dump();
+  const auto compiled = compiler.compile(
+      {.source_ids = {imported.source.source_id}});
+  CHECK(compiled.selected_page_count == 1U);
+  CHECK(state->prompts.size() == 1U);
+}
+
 TEST_CASE("compile stores one pending proposal and normalized citations") {
   kc::test::TemporaryDirectory temporary;
   const auto project_root = temporary.path() / "project";

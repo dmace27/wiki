@@ -7,7 +7,7 @@ writes vault files.
 For `Markov Chains`, evidence selection:
 
 - reads only active sources and each source's latest immutable version;
-- excludes failed and empty extracted pages;
+- excludes failed, empty, and unreviewed OCR pages;
 - optionally restricts selection to explicit `--source` IDs;
 - matches the title (`Markov Chains`), alias (`Markov chain`), and a fixed set
   of topic-specific keywords; and

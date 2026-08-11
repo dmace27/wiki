@@ -270,6 +270,25 @@ std::vector<domain::ExtractedPage> read_existing_pages(
   return pages;
 }
 
+/// Refuse to replace extraction state once a proposal has captured page-local
+/// citation offsets. This mirrors the review service's correction boundary.
+void ensure_pages_are_not_cited(
+    sqlite3* connection, const domain::SourceVersionId& version_id) {
+  Statement statement(
+      connection,
+      "SELECT p.page_id FROM source_pages p "
+      "WHERE p.source_version_id = ? AND EXISTS ("
+      "SELECT 1 FROM proposal_citations pc WHERE pc.page_id = p.page_id) "
+      "ORDER BY p.page_number LIMIT 1");
+  statement.bind_text(1, version_id.value);
+  if (statement.step() == SQLITE_ROW) {
+    throw ExtractionError(
+        ExtractionErrorKind::invalid_state,
+        "source cannot be re-extracted after a proposal cites page " +
+            statement.text(0));
+  }
+}
+
 std::map<std::uint32_t, domain::PageId> page_ids_by_number(
     const std::vector<domain::ExtractedPage>& pages) {
   std::map<std::uint32_t, domain::PageId> result;
@@ -401,10 +420,17 @@ void upsert_page(sqlite3* connection,
 
 void persist_result(storage::Database& database,
                     const domain::RunId& run_id,
+                    const domain::SourceVersionId& version_id,
+                    const bool replacing_existing_pages,
                     const std::vector<domain::ExtractedPage>& pages,
                     const std::size_t failed_pages) {
   database.execute("BEGIN IMMEDIATE;");
   try {
+    // Repeat the citation check under the write lock. A compiler process may
+    // have created a proposal while rendering or OCR was still in progress.
+    if (replacing_existing_pages) {
+      ensure_pages_are_not_cited(database.native_handle(), version_id);
+    }
     for (const auto& page : pages) {
       upsert_page(database.native_handle(), page);
     }
@@ -500,6 +526,11 @@ ExtractionResult Extractor::extract(
         .reused = true,
         .failed_pages = count_failed(existing)};
   }
+  if (force && !existing.empty()) {
+    // Fail before invoking external adapters when immutable proposal evidence
+    // already makes this source version ineligible for replacement.
+    ensure_pages_are_not_cited(database.native_handle(), source.version_id);
+  }
   const auto existing_ids = page_ids_by_number(existing);
 
   const auto run_id = domain::generate_run_id();
@@ -587,7 +618,8 @@ ExtractionResult Extractor::extract(
     }
 
     const auto failed_pages = count_failed(pages);
-    persist_result(database, run_id, pages, failed_pages);
+    persist_result(database, run_id, source.version_id, !existing.empty(),
+                   pages, failed_pages);
     return {
         .source_id = source.source_id,
         .source_version_id = source.version_id,

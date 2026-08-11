@@ -108,3 +108,14 @@ If a create proposal collides with an untracked `Markov Chains.md`, `kc apply`
 refuses to overwrite it. After reviewing that exact collision, the explicit
 `--allow-overwrite-user-file` flag permits replacement and still creates a
 recovery backup.
+
+Search applied articles locally by title, alias, and generated Markdown body:
+
+```bash
+./build/dev/apps/kc/kc search "markov chains"
+./build/dev/apps/kc/kc --json search "transition probability" --limit 5
+```
+
+Results include the article title and project-relative vault path. Title and
+alias matches rank ahead of body-only matches, and the query is treated as
+literal keywords rather than raw SQLite FTS syntax.

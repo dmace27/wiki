@@ -40,6 +40,7 @@ add_subdirectory(libs/models)
 add_subdirectory(libs/compiler)
 add_subdirectory(libs/review)
 add_subdirectory(libs/vault)
+add_subdirectory(libs/search)
 add_subdirectory(apps/kc)
 
 if(BUILD_TESTING)

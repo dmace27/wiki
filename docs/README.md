@@ -11,6 +11,7 @@ relevant document and explain the migration.
 | [CLI contract](CLI_CONTRACT.md) | Command names, arguments, output conventions, and MVP workflow. |
 | [Data contracts](DATA_CONTRACTS.md) | IDs, JSON schemas, citation validation, and Markdown rendering format. |
 | [State database](STATE_DATABASE.md) | SQLite design, migration rules, and initial DDL. |
+| [Task 3 verification](TASK_3_VERIFICATION.md) | Automated end-to-end evidence and manual OCR/Obsidian test record. |
 
 ## Non-negotiable MVP rules
 

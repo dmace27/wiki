@@ -13,6 +13,7 @@ namespace kc::extraction {
 enum class ExtractionErrorKind {
   invalid_project,
   source_not_found,
+  invalid_state,
   adapter_error,
   state_error,
 };
@@ -53,8 +54,10 @@ class Extractor {
 
   /// Extract the newest version for `source_id`.
   ///
-  /// Existing pages are returned unchanged unless `force` is true. OCR
-  /// failures still produce durable page rows with a failed status.
+  /// Existing pages are returned unchanged unless `force` is true. Forced
+  /// extraction is refused after any proposal cites an existing page, because
+  /// changing its text or status would invalidate immutable citation evidence.
+  /// OCR failures still produce durable page rows with a failed status.
   [[nodiscard]] ExtractionResult extract(
       const domain::SourceId& source_id, bool force = false);
 
