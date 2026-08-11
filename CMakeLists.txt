@@ -38,6 +38,7 @@ add_subdirectory(libs/import)
 add_subdirectory(libs/extraction)
 add_subdirectory(libs/models)
 add_subdirectory(libs/compiler)
+add_subdirectory(libs/review)
 add_subdirectory(libs/vault)
 add_subdirectory(apps/kc)
 

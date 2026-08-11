@@ -8,6 +8,7 @@ target_link_libraries(
     kc::compiler
     kc::extraction
     kc::import
+    kc::review
     kc::storage
     kc::vault
     kc_project_options

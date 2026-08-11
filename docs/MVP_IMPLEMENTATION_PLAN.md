@@ -112,6 +112,15 @@ local browser page, but it must make source evidence inspectable.
 - A reviewer can inspect proposal sections and their citations before approving.
 - The review surface does not edit the article itself.
 
+**Implemented terminal surface**
+
+- `kc review extraction` presents each page's image path, extracted text, and
+  status together and supports guarded inline/file-based correction.
+- `kc proposal list/show/reject`, together with the approval command, provides
+  proposal inspection and review decisions without exposing article editing.
+- Proposal inspection joins normalized citations to the complete cited source
+  page evidence before approval.
+
 ### 3. Search and end-to-end verification
 
 **Owner:** search/QA agent

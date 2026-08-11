@@ -32,6 +32,10 @@ review state, audit history, and the local keyword index.
 | `apply_runs` | Vault-write audit and backup reference. |
 | `article_fts` | FTS5 search index over generated articles. |
 
+Migration `002_proposal_review_reason.sql` adds nullable
+`proposals.review_reason`. It stores an optional reviewer explanation for a
+rejection without changing the immutable proposal payload.
+
 ## Initial migration
 
 Save this as `migrations/001_initial.sql` when implementation begins.
@@ -173,6 +177,10 @@ CREATE VIRTUAL TABLE article_fts USING fts5(
 - Update `article_fts` only after a successful atomic Markdown write.
 - A proposal is immutable after creation. Create a new proposal rather than
   editing its payload.
+- Extraction corrections update only `source_pages.text`, `text_sha256`, and
+  `text_status`. They must occur before the page is referenced by a proposal.
+- Proposal rejection records `reviewed_at` and optional `review_reason`; it
+  never changes an article or vault file.
 - `proposal_citations` are created transactionally with the proposal.
 - `article_citations` are replaced transactionally with a successful apply.
 - An imported source is never overwritten. New content means a new

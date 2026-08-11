@@ -10,6 +10,7 @@ add_executable(kc_tests
   integration/vault_writer_tests.cpp
   integration/migration_runner_tests.cpp
   integration/project_initializer_tests.cpp
+  integration/review_service_tests.cpp
   unit/domain_json_tests.cpp
   unit/extraction_adapter_tests.cpp
   unit/id_tests.cpp
@@ -26,6 +27,7 @@ target_link_libraries(
     kc::extraction
     kc::import
     kc::models
+    kc::review
     kc::storage
     kc::vault
     nlohmann_json_schema_validator::validator
@@ -88,4 +90,13 @@ add_test(
       -DKC_EXE=$<TARGET_FILE:kc>
       -DKC_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-vault-project
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/kc_vault_test.cmake
+)
+
+add_test(
+  NAME kc_cli_review
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DKC_EXE=$<TARGET_FILE:kc>
+      -DKC_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-review-project
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/kc_review_test.cmake
 )

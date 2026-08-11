@@ -55,6 +55,20 @@ falls back to local Tesseract OCR when native text is unusable. Install those
 programs on `PATH` to process PDFs; project initialization does not require
 them. Use `--force` to retry an existing extraction.
 
+Review extraction evidence before compilation. The terminal surface keeps the
+rendered image path, extracted text, and extraction status together. Correct a
+page inline or from a UTF-8 file; either form records a new text hash and marks
+the page `reviewed`:
+
+```bash
+./build/dev/apps/kc/kc review extraction src_01J...
+./build/dev/apps/kc/kc review extraction src_01J... --page 3 \
+  --text-file corrected-page.txt
+```
+
+Corrections are intentionally refused after a proposal cites the page, so
+proposal citation offsets and quotes remain immutable.
+
 The local model layer uses the Ollama settings in `kc.json` to request a
 schema-constrained Markov Chains proposal. It validates all returned citations
 against supplied page text and records a redacted `model_runs` audit entry.
@@ -73,9 +87,15 @@ pending proposal.
 Approve a reviewed proposal, then apply it as a separate operation:
 
 ```bash
+./build/dev/apps/kc/kc proposal list --status pending
+./build/dev/apps/kc/kc proposal show prp_01J...
 ./build/dev/apps/kc/kc proposal approve prp_01J...
 ./build/dev/apps/kc/kc apply prp_01J...
 ```
+
+`proposal show` displays the proposed sections followed by each citation's
+source page evidence. A pending proposal can instead be rejected with
+`proposal reject`; list, show, approve, and reject never edit an article.
 
 Approval never changes the vault. Application verifies and copies every cited
 immutable source, renders page-linked footnotes, writes the article through an

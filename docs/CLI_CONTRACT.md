@@ -20,7 +20,7 @@ Every command accepts:
 | `kc status` | none | Show source, page, proposal, and article counts plus pending work. |
 | `kc import` | `FILE...` | Register supported sources and retain immutable project-local copies. |
 | `kc extract` | `SOURCE_ID [--force]` | Extract native text, render pages, and run local OCR when configured. |
-| `kc review extraction` | `SOURCE_ID` | Start or open the extraction review surface. |
+| `kc review extraction` | `SOURCE_ID [--page N (--text TEXT | --text-file PATH)]` | Show page image paths, extracted text, and status together; optionally correct one page before compilation. `--page N` alone narrows inspection. |
 | `kc compile` | `--concept TITLE [--source SOURCE_ID...]` | Select relevant pages and create one schema-validated pending proposal. |
 | `kc proposal list` | `[--status STATUS]` | List proposals. |
 | `kc proposal show` | `PROPOSAL_ID` | Show proposed Markdown, diff, citations, and source-page references. |
@@ -38,6 +38,7 @@ kc init --vault ./vault
 kc import "./Probability Notes Week 8.pdf"
 kc extract src_01j...
 kc review extraction src_01j...
+kc review extraction src_01j... --page 3 --text-file corrected-page.txt
 kc compile --concept "Markov Chains"
 kc proposal show prp_01j...
 kc proposal approve prp_01j...
@@ -75,3 +76,9 @@ immutable sources before exposing their Markdown links, backs up an existing
 article, and replaces only content between the configured managed markers. It
 publishes article/citation/audit/FTS state after the atomic file replacement;
 if that state transaction fails, it restores the pre-apply article bytes.
+
+Extraction correction changes only the latest `source_pages` text, hash, and
+status. It is refused after a proposal has cited the page because proposal
+payloads and normalized citation offsets are immutable. Proposal list/show are
+read-only, while reject changes only proposal review metadata. None of these
+review operations writes or edits a vault article.

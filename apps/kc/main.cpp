@@ -1,13 +1,17 @@
 #include "kc/compiler/compiler.hpp"
+#include "kc/domain/json.hpp"
 #include "kc/extraction/extractor.hpp"
 #include "kc/import/source_importer.hpp"
+#include "kc/review/review_service.hpp"
 #include "kc/storage/project_initializer.hpp"
 #include "kc/vault/vault_writer.hpp"
 
 #include <CLI/CLI.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -134,6 +138,132 @@ nlohmann::json extraction_failure_json(
         {"page_count", result.pages.size()}}}};
 }
 
+/// Serialize extraction evidence without separating image, text, and status.
+nlohmann::json extraction_review_success_json(
+    const kc::review::ExtractionReview& review,
+    const std::optional<kc::review::PageCorrectionResult>& correction,
+    const std::optional<std::uint32_t> selected_page) {
+  auto pages = nlohmann::json::array();
+  for (const auto& page : review.pages) {
+    if (selected_page && page.page_number != *selected_page) {
+      continue;
+    }
+    nlohmann::json image_path = nullptr;
+    if (page.image_path) {
+      image_path = page.image_path->generic_string();
+    }
+    pages.push_back({{"page_id", page.page_id.value},
+                     {"page_number", page.page_number},
+                     {"image_path", std::move(image_path)},
+                     {"text", page.text},
+                     {"text_status", kc::domain::to_string(page.text_status)}});
+  }
+
+  nlohmann::json corrected = nullptr;
+  if (correction) {
+    corrected = {{"page_id", correction->page_id.value},
+                 {"page_number", correction->page_number},
+                 {"text_sha256", correction->text_sha256}};
+  }
+  return {{"ok", true},
+          {"command", "review extraction"},
+          {"result",
+           {{"source_id", review.source_id.value},
+            {"source_version_id", review.source_version_id.value},
+            {"display_name", review.display_name},
+            {"source_kind", kc::domain::to_string(review.source_kind)},
+            {"corrected", std::move(corrected)},
+            {"pages", std::move(pages)}}}};
+}
+
+/// Serialize compact proposal metadata shared by list and show output.
+nlohmann::json proposal_summary_json(
+    const kc::review::ProposalSummary& summary) {
+  nlohmann::json article_id = nullptr;
+  nlohmann::json reviewed_at = nullptr;
+  nlohmann::json review_reason = nullptr;
+  if (summary.article_id) {
+    article_id = summary.article_id->value;
+  }
+  if (summary.reviewed_at) {
+    reviewed_at = *summary.reviewed_at;
+  }
+  if (summary.review_reason) {
+    review_reason = *summary.review_reason;
+  }
+  return {{"proposal_id", summary.proposal_id.value},
+          {"article_id", std::move(article_id)},
+          {"operation", kc::domain::to_string(summary.operation)},
+          {"status", kc::domain::to_string(summary.status)},
+          {"title", summary.title},
+          {"created_at", summary.created_at},
+          {"reviewed_at", std::move(reviewed_at)},
+          {"review_reason", std::move(review_reason)}};
+}
+
+/// Build the machine-readable proposal list used by scripts and future UI.
+nlohmann::json proposal_list_success_json(
+    const std::vector<kc::review::ProposalSummary>& proposals) {
+  auto items = nlohmann::json::array();
+  for (const auto& proposal : proposals) {
+    items.push_back(proposal_summary_json(proposal));
+  }
+  return {{"ok", true},
+          {"command", "proposal list"},
+          {"result", {{"proposals", std::move(items)}}}};
+}
+
+/// Include complete extracted source evidence beside normalized citations.
+nlohmann::json proposal_review_success_json(
+    const kc::review::ProposalReview& review) {
+  auto evidence = nlohmann::json::array();
+  for (const auto& item : review.citation_evidence) {
+    nlohmann::json image_path = nullptr;
+    if (item.image_path) {
+      image_path = item.image_path->generic_string();
+    }
+    evidence.push_back(
+        {{"section_key", item.section_key},
+         {"block_index", item.block_index},
+         {"citation",
+          {{"page_id", item.citation.page_id.value},
+           {"start_char", item.citation.start_char},
+           {"end_char", item.citation.end_char},
+           {"quote", item.citation.quote}}},
+         {"source_id", item.source_id.value},
+         {"source_name", item.source_name},
+         {"source_kind", kc::domain::to_string(item.source_kind)},
+         {"source_version_id", item.source_version_id.value},
+         {"page_number", item.page_number},
+         {"image_path", std::move(image_path)},
+         {"extracted_text", item.extracted_text},
+         {"text_status", kc::domain::to_string(item.text_status)}});
+  }
+  const nlohmann::json proposal = review.proposal;
+  return {{"ok", true},
+          {"command", "proposal show"},
+          {"result",
+           {{"summary", proposal_summary_json(review.summary)},
+            {"proposal", proposal},
+            {"citation_evidence", std::move(evidence)}}}};
+}
+
+/// Build the machine-readable result for a rejection review decision.
+nlohmann::json rejection_success_json(
+    const kc::domain::ProposalId& proposal_id,
+    const std::optional<std::string>& reason) {
+  nlohmann::json serialized_reason = nullptr;
+  if (reason) {
+    serialized_reason = *reason;
+  }
+  return {{"ok", true},
+          {"command", "proposal reject"},
+          {"result",
+           {{"proposal_id", proposal_id.value},
+            {"status", "rejected"},
+            {"reason", std::move(serialized_reason)}}}};
+}
+
 /// Build the machine-readable result for a committed pending proposal.
 nlohmann::json compile_success_json(
     const kc::compiler::CompileResult& result) {
@@ -258,6 +388,102 @@ std::string_view vault_error_code(const kc::vault::VaultErrorKind kind) {
   return "state_error";
 }
 
+/// Map review failures to the stable process exits in CLI_CONTRACT.md.
+int review_exit_code(const kc::review::ReviewErrorKind kind) {
+  switch (kind) {
+    case kc::review::ReviewErrorKind::invalid_project:
+    case kc::review::ReviewErrorKind::invalid_input:
+      return 2;
+    case kc::review::ReviewErrorKind::source_not_found:
+    case kc::review::ReviewErrorKind::page_not_found:
+    case kc::review::ReviewErrorKind::proposal_not_found:
+    case kc::review::ReviewErrorKind::invalid_state:
+      return 3;
+    case kc::review::ReviewErrorKind::state_error:
+      return 6;
+  }
+  return 6;
+}
+
+/// Map review failures to a small, script-friendly error vocabulary.
+std::string_view review_error_code(const kc::review::ReviewErrorKind kind) {
+  switch (kind) {
+    case kc::review::ReviewErrorKind::invalid_project:
+      return "invalid_project";
+    case kc::review::ReviewErrorKind::source_not_found:
+      return "source_not_found";
+    case kc::review::ReviewErrorKind::page_not_found:
+      return "page_not_found";
+    case kc::review::ReviewErrorKind::proposal_not_found:
+      return "proposal_not_found";
+    case kc::review::ReviewErrorKind::invalid_state:
+      return "invalid_state";
+    case kc::review::ReviewErrorKind::invalid_input:
+      return "invalid_input";
+    case kc::review::ReviewErrorKind::state_error:
+      return "state_error";
+  }
+  return "state_error";
+}
+
+/// Parse the optional proposal-list status without accepting near matches.
+kc::domain::ProposalStatus parse_proposal_status(const std::string_view value) {
+  if (value == "pending") {
+    return kc::domain::ProposalStatus::pending;
+  }
+  if (value == "approved") {
+    return kc::domain::ProposalStatus::approved;
+  }
+  if (value == "rejected") {
+    return kc::domain::ProposalStatus::rejected;
+  }
+  if (value == "applied") {
+    return kc::domain::ProposalStatus::applied;
+  }
+  if (value == "superseded") {
+    return kc::domain::ProposalStatus::superseded;
+  }
+  throw kc::review::ReviewError(
+      kc::review::ReviewErrorKind::invalid_input,
+      "proposal status must be pending, approved, rejected, applied, or superseded");
+}
+
+/// Read a reviewer correction exactly, including line breaks.
+std::string read_correction_file(const std::filesystem::path& path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    throw kc::review::ReviewError(
+        kc::review::ReviewErrorKind::invalid_input,
+        "could not read correction text file: " + path.string());
+  }
+  std::string text{std::istreambuf_iterator<char>(input),
+                   std::istreambuf_iterator<char>()};
+  if (input.bad()) {
+    throw kc::review::ReviewError(
+        kc::review::ReviewErrorKind::invalid_input,
+        "could not read complete correction text file: " + path.string());
+  }
+  return text;
+}
+
+/// Discover a project while preserving review-specific error classification.
+void discover_review_project_if_unspecified(
+    std::filesystem::path& project, const CLI::Option& project_option,
+    const std::string_view command) {
+  if (project_option.count() != 0U) {
+    return;
+  }
+  const auto discovered = find_project_root(std::filesystem::current_path());
+  if (!discovered) {
+    throw kc::review::ReviewError(
+        kc::review::ReviewErrorKind::invalid_project,
+        "no kc.json found in the current directory or its parents; run 'kc "
+        "init' first before '" +
+            std::string(command) + "'");
+  }
+  project = *discovered;
+}
+
 /// Apply project discovery consistently to all commands that require state.
 void discover_project_if_unspecified(
     std::filesystem::path& project, const CLI::Option& project_option,
@@ -327,10 +553,51 @@ int main(const int argc, char** argv) {
                    "Restrict evidence to one or more imported source IDs")
       ->expected(-1);
 
+  auto* review_command =
+      app.add_subcommand("review", "Inspect and correct extracted source evidence");
+  review_command->fallthrough();
+  review_command->require_subcommand(1);
+  auto* review_extraction_command = review_command->add_subcommand(
+      "extraction", "Show page image, extracted text, and status together");
+  review_extraction_command->fallthrough();
+  std::string review_source_id;
+  std::uint32_t review_page_number = 0;
+  std::string correction_text;
+  std::filesystem::path correction_text_file;
+  review_extraction_command
+      ->add_option("SOURCE_ID", review_source_id, "Imported source ID")
+      ->required();
+  auto* review_page_option = review_extraction_command->add_option(
+      "--page", review_page_number,
+      "Show one page, and identify the page when correcting text");
+  auto* correction_text_option = review_extraction_command->add_option(
+      "--text", correction_text, "Replace the selected page's extracted text");
+  auto* correction_file_option = review_extraction_command->add_option(
+      "--text-file", correction_text_file,
+      "Read replacement text exactly from a UTF-8 file");
+  correction_text_option->needs(review_page_option)->excludes(correction_file_option);
+  correction_file_option->needs(review_page_option)->excludes(correction_text_option);
+
   auto* proposal_command =
       app.add_subcommand("proposal", "Review immutable article proposals");
   proposal_command->fallthrough();
   proposal_command->require_subcommand(1);
+  auto* proposal_list_command = proposal_command->add_subcommand(
+      "list", "List proposals and their review states");
+  proposal_list_command->fallthrough();
+  std::string proposal_list_status;
+  proposal_list_command->add_option(
+      "--status", proposal_list_status,
+      "Restrict results to pending, approved, rejected, applied, or superseded");
+
+  auto* proposal_show_command = proposal_command->add_subcommand(
+      "show", "Inspect proposal sections, citations, and source pages");
+  proposal_show_command->fallthrough();
+  std::string show_proposal_id;
+  proposal_show_command
+      ->add_option("PROPOSAL_ID", show_proposal_id, "Proposal ID")
+      ->required();
+
   auto* approve_command = proposal_command->add_subcommand(
       "approve", "Approve a pending proposal without writing the vault");
   approve_command->fallthrough();
@@ -339,6 +606,17 @@ int main(const int argc, char** argv) {
       ->add_option("PROPOSAL_ID", approve_proposal_id,
                    "Pending proposal ID")
       ->required();
+
+  auto* reject_command = proposal_command->add_subcommand(
+      "reject", "Reject a pending proposal without writing the vault");
+  reject_command->fallthrough();
+  std::string reject_proposal_id;
+  std::string rejection_reason;
+  reject_command
+      ->add_option("PROPOSAL_ID", reject_proposal_id, "Pending proposal ID")
+      ->required();
+  reject_command->add_option("--reason", rejection_reason,
+                             "Optional human review reason");
 
   auto* apply_command = app.add_subcommand(
       "apply", "Atomically apply an approved proposal to the vault");
@@ -519,6 +797,90 @@ int main(const int argc, char** argv) {
     }
   }
 
+  if (*review_extraction_command) {
+    try {
+      discover_review_project_if_unspecified(project, *project_option,
+                                             "review extraction");
+      kc::review::ReviewService reviewer(project);
+      std::optional<kc::review::PageCorrectionResult> correction;
+      const auto has_inline_correction = correction_text_option->count() != 0U;
+      const auto has_file_correction = correction_file_option->count() != 0U;
+      if (has_inline_correction || has_file_correction) {
+        auto text = has_file_correction
+                        ? read_correction_file(correction_text_file)
+                        : correction_text;
+        correction = reviewer.correct_page_text(
+            kc::domain::SourceId{review_source_id}, review_page_number,
+            std::move(text));
+      }
+
+      const auto review = reviewer.review_extraction(
+          kc::domain::SourceId{review_source_id});
+      const auto selected_page = review_page_option->count() == 0U
+                                     ? std::optional<std::uint32_t>{}
+                                     : std::optional<std::uint32_t>{
+                                           review_page_number};
+      if (selected_page &&
+          std::ranges::none_of(review.pages, [&](const auto& page) {
+            return page.page_number == *selected_page;
+          })) {
+        throw kc::review::ReviewError(
+            kc::review::ReviewErrorKind::page_not_found,
+            "source version has no extracted page " +
+                std::to_string(*selected_page));
+      }
+
+      if (json_output) {
+        std::cout
+            << extraction_review_success_json(review, correction, selected_page)
+                   .dump()
+            << '\n';
+      } else if (!quiet) {
+        std::cout << "Extraction review: " << review.display_name << " ("
+                  << review.source_id.value << ")\n";
+        if (correction) {
+          std::cout << "Corrected page " << correction->page_number
+                    << " and marked it reviewed.\n";
+        }
+        for (const auto& page : review.pages) {
+          if (selected_page && page.page_number != *selected_page) {
+            continue;
+          }
+          std::cout << "\nPage " << page.page_number << " ["
+                    << kc::domain::to_string(page.text_status) << "]\n"
+                    << "Image: "
+                    << (page.image_path ? page.image_path->generic_string()
+                                        : "unavailable for this source")
+                    << "\nExtracted text:\n"
+                    << page.text << '\n';
+        }
+      }
+      return 0;
+    } catch (const kc::review::ReviewError& error) {
+      const auto kind = error.kind();
+      if (json_output) {
+        std::cout << error_json("review extraction", review_error_code(kind),
+                                error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc review extraction: " << error.what() << '\n';
+      }
+      return review_exit_code(kind);
+    } catch (const std::exception& error) {
+      if (json_output) {
+        std::cout << error_json("review extraction", "internal_error",
+                                error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc review extraction: unexpected error: "
+                  << error.what() << '\n';
+      }
+      return 6;
+    }
+  }
+
   if (*compile_command) {
     try {
       if (project_option->count() == 0U) {
@@ -570,6 +932,129 @@ int main(const int argc, char** argv) {
     }
   }
 
+  if (*proposal_list_command) {
+    try {
+      discover_review_project_if_unspecified(project, *project_option,
+                                             "proposal list");
+      std::optional<kc::domain::ProposalStatus> status;
+      if (!proposal_list_status.empty()) {
+        status = parse_proposal_status(proposal_list_status);
+      }
+      kc::review::ReviewService reviewer(project);
+      const auto proposals = reviewer.list_proposals(status);
+      if (json_output) {
+        std::cout << proposal_list_success_json(proposals).dump() << '\n';
+      } else if (!quiet) {
+        if (proposals.empty()) {
+          std::cout << "No proposals found.\n";
+        }
+        for (const auto& proposal : proposals) {
+          std::cout << proposal.proposal_id.value << "  "
+                    << kc::domain::to_string(proposal.status) << "  "
+                    << kc::domain::to_string(proposal.operation) << "  "
+                    << proposal.title << '\n';
+        }
+      }
+      return 0;
+    } catch (const kc::review::ReviewError& error) {
+      const auto kind = error.kind();
+      if (json_output) {
+        std::cout << error_json("proposal list", review_error_code(kind),
+                                error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc proposal list: " << error.what() << '\n';
+      }
+      return review_exit_code(kind);
+    } catch (const std::exception& error) {
+      if (json_output) {
+        std::cout << error_json("proposal list", "internal_error", error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc proposal list: unexpected error: " << error.what()
+                  << '\n';
+      }
+      return 6;
+    }
+  }
+
+  if (*proposal_show_command) {
+    try {
+      discover_review_project_if_unspecified(project, *project_option,
+                                             "proposal show");
+      kc::review::ReviewService reviewer(project);
+      const auto review = reviewer.review_proposal(
+          kc::domain::ProposalId{show_proposal_id});
+      if (json_output) {
+        std::cout << proposal_review_success_json(review).dump() << '\n';
+      } else if (!quiet) {
+        std::cout << "Proposal " << review.summary.proposal_id.value << " ["
+                  << kc::domain::to_string(review.summary.status) << "]\n"
+                  << "Operation: "
+                  << kc::domain::to_string(review.summary.operation) << "\n\n"
+                  << "# " << review.proposal.article.title << '\n';
+        for (const auto& section : review.proposal.sections) {
+          std::cout << "\n## " << section.heading << '\n';
+          for (const auto& block : section.blocks) {
+            std::cout << (block.kind == kc::domain::BlockKind::bullet ? "- " : "")
+                      << block.text;
+            for (const auto& citation : block.citations) {
+              std::cout << " [" << citation.page_id.value << ']';
+            }
+            std::cout << '\n';
+          }
+        }
+        if (!review.proposal.related_concepts.empty()) {
+          std::cout << "\n## Related concepts\n";
+          for (const auto& related : review.proposal.related_concepts) {
+            std::cout << "- [[" << related.title << "]] — "
+                      << related.reason << '\n';
+          }
+        }
+        std::cout << "\nCitation evidence\n";
+        for (const auto& evidence : review.citation_evidence) {
+          std::cout << "\n" << evidence.section_key << " block "
+                    << evidence.block_index << ": \""
+                    << evidence.citation.quote << "\"\n"
+                    << "Source: " << evidence.source_name << ", page "
+                    << evidence.page_number << " ["
+                    << kc::domain::to_string(evidence.text_status) << "]\n"
+                    << "Image: "
+                    << (evidence.image_path
+                            ? evidence.image_path->generic_string()
+                            : "unavailable for this source")
+                    << "\nExtracted text:\n"
+                    << evidence.extracted_text << '\n';
+        }
+        std::cout << "\nReview only: no vault article was changed.\n";
+      }
+      return 0;
+    } catch (const kc::review::ReviewError& error) {
+      const auto kind = error.kind();
+      if (json_output) {
+        std::cout << error_json("proposal show", review_error_code(kind),
+                                error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc proposal show: " << error.what() << '\n';
+      }
+      return review_exit_code(kind);
+    } catch (const std::exception& error) {
+      if (json_output) {
+        std::cout << error_json("proposal show", "internal_error", error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc proposal show: unexpected error: " << error.what()
+                  << '\n';
+      }
+      return 6;
+    }
+  }
+
   if (*approve_command) {
     try {
       discover_project_if_unspecified(project, *project_option,
@@ -603,6 +1088,49 @@ int main(const int argc, char** argv) {
                   << '\n';
       } else {
         std::cerr << "kc proposal approve: unexpected error: " << error.what()
+                  << '\n';
+      }
+      return 6;
+    }
+  }
+
+  if (*reject_command) {
+    try {
+      discover_review_project_if_unspecified(project, *project_option,
+                                             "proposal reject");
+      const kc::domain::ProposalId proposal_id{reject_proposal_id};
+      std::optional<std::string> reason;
+      if (!rejection_reason.empty()) {
+        reason = rejection_reason;
+      }
+      kc::review::ReviewService reviewer(project);
+      reviewer.reject_proposal(proposal_id, reason);
+      if (json_output) {
+        std::cout << rejection_success_json(proposal_id, reason).dump() << '\n';
+      } else if (!quiet) {
+        std::cout << "Rejected proposal " << proposal_id.value
+                  << "; the vault is unchanged\n";
+      }
+      return 0;
+    } catch (const kc::review::ReviewError& error) {
+      const auto kind = error.kind();
+      if (json_output) {
+        std::cout << error_json("proposal reject", review_error_code(kind),
+                                error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc proposal reject: " << error.what() << '\n';
+      }
+      return review_exit_code(kind);
+    } catch (const std::exception& error) {
+      if (json_output) {
+        std::cout << error_json("proposal reject", "internal_error",
+                                error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc proposal reject: unexpected error: " << error.what()
                   << '\n';
       }
       return 6;

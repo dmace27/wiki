@@ -56,6 +56,7 @@ knowledge-compiler/
 │   ├── extraction/                 # PDF text, rendering, and OCR interfaces
 │   ├── models/                     # Local/API model adapters and response validation
 │   ├── compiler/                   # Page selection and proposal generation
+│   ├── review/                     # Extraction correction and proposal review
 │   ├── vault/                      # Markdown rendering and atomic writes
 │   ├── search/                     # Concept/title/body search
 │   └── server/                     # Deferred loopback review API
@@ -85,6 +86,7 @@ class Extractor;
 class OcrProvider;
 class LanguageModel;
 class ProposalValidator;
+class ReviewService;
 class VaultWriter;
 class SearchIndex;
 ```

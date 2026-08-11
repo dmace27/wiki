@@ -20,7 +20,7 @@ TEST_CASE("project initialization is offline and idempotent") {
   CHECK(first.created);
   CHECK_FALSE(second.created);
   CHECK(first.config.project_id == second.config.project_id);
-  CHECK(first.applied_migrations == std::vector<int>{1});
+  CHECK(first.applied_migrations == std::vector<int>{1, 2});
   CHECK(second.applied_migrations.empty());
   CHECK(std::filesystem::is_regular_file(first.config_path));
   CHECK(std::filesystem::is_regular_file(first.state_path));
