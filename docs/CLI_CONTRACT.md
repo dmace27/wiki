@@ -26,7 +26,7 @@ Every command accepts:
 | `kc proposal show` | `PROPOSAL_ID` | Show proposed Markdown, diff, citations, and source-page references. |
 | `kc proposal approve` | `PROPOSAL_ID` | Approve a valid pending proposal; does not write the vault. |
 | `kc proposal reject` | `PROPOSAL_ID [--reason TEXT]` | Reject a pending proposal; does not write the vault. |
-| `kc apply` | `PROPOSAL_ID` | Atomically write an approved proposal and update citations/search. |
+| `kc apply` | `PROPOSAL_ID [--allow-overwrite-user-file]` | Atomically write an approved proposal and update citations/search. The flag is required to replace an untracked colliding file. |
 | `kc search` | `QUERY [--limit N]` | Search article title, aliases, and body using local FTS5. |
 | `kc open` | `ARTICLE_ID` | Deferred platform integration to open a vault article in Obsidian. |
 | `kc serve` | `[--port PORT]` | Deferred loopback review/search UI server. |
@@ -69,3 +69,9 @@ pending/approved --newer proposal-------> superseded
 
 `kc apply` must reject every status except `approved`. `kc compile` must never
 modify the vault.
+
+`kc proposal approve` changes review state only. `kc apply` copies cited
+immutable sources before exposing their Markdown links, backs up an existing
+article, and replaces only content between the configured managed markers. It
+publishes article/citation/audit/FTS state after the atomic file replacement;
+if that state transaction fails, it restores the pre-apply article bytes.

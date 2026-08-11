@@ -69,3 +69,22 @@ Compilation deterministically matches title, alias, and topic keywords, stores
 normalized citations transactionally, and never writes vault files. Invalid
 model output remains only a redacted failed model run and cannot become a
 pending proposal.
+
+Approve a reviewed proposal, then apply it as a separate operation:
+
+```bash
+./build/dev/apps/kc/kc proposal approve prp_01J...
+./build/dev/apps/kc/kc apply prp_01J...
+```
+
+Approval never changes the vault. Application verifies and copies every cited
+immutable source, renders page-linked footnotes, writes the article through an
+atomic temporary-file replacement, and updates audit/citation/search state only
+after that replacement succeeds. Existing generated articles retain every byte
+outside their `kc:managed` markers, and the complete previous file is backed up
+under `.knowledge-compiler/backups/`.
+
+If a create proposal collides with an untracked `Markov Chains.md`, `kc apply`
+refuses to overwrite it. After reviewing that exact collision, the explicit
+`--allow-overwrite-user-file` flag permits replacement and still creates a
+recovery backup.

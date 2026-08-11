@@ -2,6 +2,7 @@
 #include "kc/extraction/extractor.hpp"
 #include "kc/import/source_importer.hpp"
 #include "kc/storage/project_initializer.hpp"
+#include "kc/vault/vault_writer.hpp"
 
 #include <CLI/CLI.hpp>
 #include <nlohmann/json.hpp>
@@ -152,6 +153,34 @@ nlohmann::json compile_success_json(
         {"status", "pending"}}}};
 }
 
+/// Build the machine-readable result for the review-only approval transition.
+nlohmann::json approval_success_json(
+    const kc::domain::ProposalId& proposal_id) {
+  return {{"ok", true},
+          {"command", "proposal approve"},
+          {"result",
+           {{"proposal_id", proposal_id.value}, {"status", "approved"}}}};
+}
+
+/// Build the machine-readable result for one durable vault application.
+nlohmann::json apply_success_json(const kc::vault::ApplyResult& result) {
+  nlohmann::json backup_path = nullptr;
+  if (result.backup_path) {
+    backup_path = result.backup_path->generic_string();
+  }
+  return {
+      {"ok", true},
+      {"command", "apply"},
+      {"result",
+       {{"apply_run_id", result.apply_run_id.value},
+        {"proposal_id", result.proposal_id.value},
+        {"article_id", result.article_id.value},
+        {"vault_path", result.vault_path.generic_string()},
+        {"backup_path", std::move(backup_path)},
+        {"content_sha256", result.content_sha256},
+        {"status", "applied"}}}};
+}
+
 /// Map compiler failures to the stable process exits in CLI_CONTRACT.md.
 int compiler_exit_code(const kc::compiler::CompilerErrorKind kind) {
   switch (kind) {
@@ -191,6 +220,60 @@ std::string_view compiler_error_code(
       return "state_error";
   }
   return "state_error";
+}
+
+/// Map writer failures to the stable process exits in CLI_CONTRACT.md.
+int vault_exit_code(const kc::vault::VaultErrorKind kind) {
+  switch (kind) {
+    case kc::vault::VaultErrorKind::invalid_project:
+      return 2;
+    case kc::vault::VaultErrorKind::proposal_not_found:
+    case kc::vault::VaultErrorKind::invalid_proposal_state:
+    case kc::vault::VaultErrorKind::unsafe_write:
+      return 3;
+    case kc::vault::VaultErrorKind::validation_failed:
+      return 5;
+    case kc::vault::VaultErrorKind::state_error:
+      return 6;
+  }
+  return 6;
+}
+
+/// Map writer failures to a small, script-friendly error vocabulary.
+std::string_view vault_error_code(const kc::vault::VaultErrorKind kind) {
+  switch (kind) {
+    case kc::vault::VaultErrorKind::invalid_project:
+      return "invalid_project";
+    case kc::vault::VaultErrorKind::proposal_not_found:
+      return "proposal_not_found";
+    case kc::vault::VaultErrorKind::invalid_proposal_state:
+      return "invalid_proposal_state";
+    case kc::vault::VaultErrorKind::validation_failed:
+      return "validation_failed";
+    case kc::vault::VaultErrorKind::unsafe_write:
+      return "unsafe_write";
+    case kc::vault::VaultErrorKind::state_error:
+      return "state_error";
+  }
+  return "state_error";
+}
+
+/// Apply project discovery consistently to all commands that require state.
+void discover_project_if_unspecified(
+    std::filesystem::path& project, const CLI::Option& project_option,
+    const std::string_view command) {
+  if (project_option.count() != 0U) {
+    return;
+  }
+  const auto discovered = find_project_root(std::filesystem::current_path());
+  if (!discovered) {
+    throw kc::vault::VaultError(
+        kc::vault::VaultErrorKind::invalid_project,
+        "no kc.json found in the current directory or its parents; run 'kc "
+        "init' first before '" +
+            std::string(command) + "'");
+  }
+  project = *discovered;
 }
 
 }  // namespace
@@ -243,6 +326,31 @@ int main(const int argc, char** argv) {
       ->add_option("--source", compile_source_ids,
                    "Restrict evidence to one or more imported source IDs")
       ->expected(-1);
+
+  auto* proposal_command =
+      app.add_subcommand("proposal", "Review immutable article proposals");
+  proposal_command->fallthrough();
+  proposal_command->require_subcommand(1);
+  auto* approve_command = proposal_command->add_subcommand(
+      "approve", "Approve a pending proposal without writing the vault");
+  approve_command->fallthrough();
+  std::string approve_proposal_id;
+  approve_command
+      ->add_option("PROPOSAL_ID", approve_proposal_id,
+                   "Pending proposal ID")
+      ->required();
+
+  auto* apply_command = app.add_subcommand(
+      "apply", "Atomically apply an approved proposal to the vault");
+  apply_command->fallthrough();
+  std::string apply_proposal_id;
+  bool allow_overwrite_user_file = false;
+  apply_command
+      ->add_option("PROPOSAL_ID", apply_proposal_id, "Approved proposal ID")
+      ->required();
+  apply_command->add_flag(
+      "--allow-overwrite-user-file", allow_overwrite_user_file,
+      "Explicitly permit replacing an untracked colliding Markdown file");
 
   // Parsing the CLI inputs
   try {
@@ -457,6 +565,84 @@ int main(const int argc, char** argv) {
                   << '\n';
       } else {
         std::cerr << "kc compile: unexpected error: " << error.what() << '\n';
+      }
+      return 6;
+    }
+  }
+
+  if (*approve_command) {
+    try {
+      discover_project_if_unspecified(project, *project_option,
+                                      "proposal approve");
+      const kc::domain::ProposalId proposal_id{approve_proposal_id};
+      kc::vault::VaultWriter writer(project);
+      writer.approve(proposal_id);
+      if (json_output) {
+        std::cout << approval_success_json(proposal_id).dump() << '\n';
+      } else if (!quiet) {
+        std::cout << "Approved proposal " << proposal_id.value
+                  << "; the vault is unchanged\n";
+      }
+      return 0;
+    } catch (const kc::vault::VaultError& error) {
+      const auto kind = error.kind();
+      if (json_output) {
+        std::cout << error_json("proposal approve", vault_error_code(kind),
+                                error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc proposal approve: " << error.what() << '\n';
+      }
+      return vault_exit_code(kind);
+    } catch (const std::exception& error) {
+      if (json_output) {
+        std::cout << error_json("proposal approve", "internal_error",
+                                error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc proposal approve: unexpected error: " << error.what()
+                  << '\n';
+      }
+      return 6;
+    }
+  }
+
+  if (*apply_command) {
+    try {
+      discover_project_if_unspecified(project, *project_option, "apply");
+      kc::vault::VaultWriter writer(project);
+      const auto result = writer.apply(
+          kc::domain::ProposalId{apply_proposal_id},
+          {.allow_overwrite_user_file = allow_overwrite_user_file});
+      if (json_output) {
+        std::cout << apply_success_json(result).dump() << '\n';
+      } else if (!quiet) {
+        std::cout << "Applied proposal " << result.proposal_id.value << " to "
+                  << result.vault_path.generic_string() << '\n';
+        if (result.backup_path) {
+          std::cout << "Backed up the previous article at "
+                    << result.backup_path->generic_string() << '\n';
+        }
+      }
+      return 0;
+    } catch (const kc::vault::VaultError& error) {
+      const auto kind = error.kind();
+      if (json_output) {
+        std::cout << error_json("apply", vault_error_code(kind), error.what())
+                         .dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc apply: " << error.what() << '\n';
+      }
+      return vault_exit_code(kind);
+    } catch (const std::exception& error) {
+      if (json_output) {
+        std::cout << error_json("apply", "internal_error", error.what()).dump()
+                  << '\n';
+      } else {
+        std::cerr << "kc apply: unexpected error: " << error.what() << '\n';
       }
       return 6;
     }

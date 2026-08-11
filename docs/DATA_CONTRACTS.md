@@ -218,6 +218,12 @@ arbitrary operations.
 The compiler owns only the content between `kc:managed` markers. The writer
 builds source footnotes itself from validated citation records.
 
+Vault source copies use the immutable name
+`<source_id>-<source_version_id>.<extension>` under the configured
+`vault.source_directory`. PDF footnotes append `#page=<page_number>`; this
+keeps a citation target stable even after a later version of the same logical
+source is imported.
+
 ```markdown
 ---
 kc_schema: 1
