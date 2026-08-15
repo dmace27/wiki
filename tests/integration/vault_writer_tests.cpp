@@ -204,7 +204,9 @@ TEST_CASE(
   CHECK(database.scalar_text("SELECT body FROM article_fts") == content);
 }
 
-TEST_CASE("updates preserve outside bytes and back up the complete old file") {
+TEST_CASE(
+    "updates atomically replace existing articles, preserve outside bytes, "
+    "and back up the complete old file") {
   kc::test::TemporaryDirectory temporary;
   const auto project_root = temporary.path() / "project";
   const auto initialized =

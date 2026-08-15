@@ -25,6 +25,16 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace kc::vault {
 namespace {
 
@@ -709,7 +719,29 @@ std::string read_file(const std::filesystem::path &path) {
   return content;
 }
 
-/// Write a complete sibling and atomically rename it over the destination.
+/// Replace `destination` with a complete sibling temporary file.
+///
+/// POSIX rename replaces an existing destination atomically. The C++
+/// `filesystem::rename` wrapper does not provide that behavior on Windows, so
+/// use the native replace flag there. Because callers always create the
+/// temporary file beside the destination, this remains a same-volume rename.
+void replace_with_temporary_file(const std::filesystem::path &temporary,
+                                 const std::filesystem::path &destination) {
+#if defined(_WIN32)
+  constexpr DWORD flags = MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH;
+  if (MoveFileExW(temporary.c_str(), destination.c_str(), flags) == 0) {
+    const auto error = std::error_code(static_cast<int>(GetLastError()),
+                                       std::system_category());
+    throw VaultError(VaultErrorKind::unsafe_write,
+                     "could not atomically replace vault file: " +
+                         error.message());
+  }
+#else
+  std::filesystem::rename(temporary, destination);
+#endif
+}
+
+/// Write a complete sibling and atomically replace the destination with it.
 void atomic_write(const std::filesystem::path &path,
                   const std::string_view content) {
   const auto temporary =
@@ -730,7 +762,7 @@ void atomic_write(const std::filesystem::path &path,
                          "could not write complete temporary vault file");
       }
     }
-    std::filesystem::rename(temporary, path);
+    replace_with_temporary_file(temporary, path);
   } catch (...) {
     std::error_code ignored;
     std::filesystem::remove(temporary, ignored);

@@ -17,6 +17,10 @@ An application:
 - commits article identity, citations, apply audit, proposal state, and FTS
   content together only after the filesystem write succeeds.
 
+Atomic article replacement uses same-directory rename semantics on POSIX and
+Windows `MoveFileExW` with replacement enabled, so updating an existing article
+does not depend on the destination being absent.
+
 If the database commit fails after the rename, the writer restores the backup
 (or removes a newly-created article), so an unrecorded application is not left
 in the user vault.
