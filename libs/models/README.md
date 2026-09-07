@@ -1,7 +1,7 @@
 # Model adapters
 
 The models library implements MVP step 1C: a local Ollama-compatible
-`LanguageModel`, a schema-constrained Markov Chains prompt, semantic citation
+`LanguageModel`, a schema-constrained concept prompt, semantic citation
 validation, and redacted model-run auditing.
 
 ## Capability boundaries
@@ -14,7 +14,7 @@ write callback. Provider implementations therefore cannot write vault files.
 `ModelRunner` is the surrounding application service. It:
 
 1. reads the selected provider, base URL, model, and timeout from `kc.json`;
-2. builds the versioned `markov-chains-v1` prompt;
+2. builds the versioned `concept-v1` prompt for the requested concept;
 3. hashes the complete canonical request without persisting prompt/evidence;
 4. invokes the provider;
 5. strictly parses the `ArticleProposal` contract;
@@ -39,7 +39,7 @@ at 16 MiB and provider error bodies are never persisted.
 
 ## Validation and audit statuses
 
-- `completed`: the JSON shape, Markov Chains target, operation, and every
+- `completed`: the JSON shape, requested concept target, operation, and every
   citation are valid. `response_json` contains canonical validated JSON.
 - `invalid_response`: JSON parsing, strict proposal parsing, or citation
   validation failed. No proposal is returned. Untrusted output is replaced by

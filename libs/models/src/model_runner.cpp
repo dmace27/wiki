@@ -4,7 +4,7 @@
 #include "kc/domain/json.hpp"
 #include "kc/import/sha256.hpp"
 #include "kc/storage/database.hpp"
-#include "markov_chains_prompt.hpp"
+#include "concept_prompt.hpp"
 
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
@@ -177,7 +177,7 @@ std::string request_hash(const LanguageModel& model,
   const nlohmann::json audit_input{
       {"provider", model.provider_name()},
       {"model", model.model_name()},
-      {"prompt_version", detail::markov_prompt_version},
+      {"prompt_version", detail::concept_prompt_version},
       {"system_prompt", request.system_prompt},
       {"user_prompt", request.user_prompt},
       {"response_schema", request.response_schema}};
@@ -231,7 +231,7 @@ ModelRunner::ModelRunner(std::filesystem::path project_root,
   }
 }
 
-ModelRunResult ModelRunner::generate_markov_chains(
+ModelRunResult ModelRunner::generate_concept(
     const ProposalGenerationRequest& request) {
   const auto request_validation = validator_.validate_request(request);
   if (!request_validation) {
@@ -241,7 +241,7 @@ ModelRunResult ModelRunner::generate_markov_chains(
     throw ModelError(ModelErrorKind::invalid_request, detail);
   }
 
-  const auto prompt = detail::build_markov_chains_prompt(request);
+  const auto prompt = detail::build_concept_prompt(request);
   const auto hash = request_hash(*language_model_, prompt);
   const auto run_id = domain::generate_run_id();
   const auto started_at = utc_now();
@@ -255,7 +255,7 @@ ModelRunResult ModelRunner::generate_markov_chains(
     // errors can contain URLs, headers, model infrastructure, or response data.
     record_model_run(
         state_path, run_id, language_model_->provider_name(),
-        language_model_->model_name(), detail::markov_prompt_version, hash,
+        language_model_->model_name(), detail::concept_prompt_version, hash,
         domain::ModelRunStatus::failed, started_at, std::nullopt,
         "local model request failed");
     return {
@@ -272,7 +272,7 @@ ModelRunResult ModelRunner::generate_markov_chains(
         {"/", "model response was not valid JSON"}};
     record_model_run(
         state_path, run_id, language_model_->provider_name(),
-        language_model_->model_name(), detail::markov_prompt_version, hash,
+        language_model_->model_name(), detail::concept_prompt_version, hash,
         domain::ModelRunStatus::invalid_response, started_at,
         redacted_invalid_response(response.content, issues.size()),
         "model response failed validation");
@@ -286,7 +286,7 @@ ModelRunResult ModelRunner::generate_markov_chains(
   if (!parsed) {
     record_model_run(
         state_path, run_id, language_model_->provider_name(),
-        language_model_->model_name(), detail::markov_prompt_version, hash,
+        language_model_->model_name(), detail::concept_prompt_version, hash,
         domain::ModelRunStatus::invalid_response, started_at,
         redacted_invalid_response(response.content, parsed.issues.size()),
         "model response failed validation");
@@ -300,7 +300,7 @@ ModelRunResult ModelRunner::generate_markov_chains(
   if (!semantic) {
     record_model_run(
         state_path, run_id, language_model_->provider_name(),
-        language_model_->model_name(), detail::markov_prompt_version, hash,
+        language_model_->model_name(), detail::concept_prompt_version, hash,
         domain::ModelRunStatus::invalid_response, started_at,
         redacted_invalid_response(response.content, semantic.issues.size()),
         "model response failed validation");
@@ -313,7 +313,7 @@ ModelRunResult ModelRunner::generate_markov_chains(
   const nlohmann::json validated_proposal = *parsed.value;
   record_model_run(
       state_path, run_id, language_model_->provider_name(),
-      language_model_->model_name(), detail::markov_prompt_version, hash,
+      language_model_->model_name(), detail::concept_prompt_version, hash,
       domain::ModelRunStatus::completed, started_at,
       validated_proposal.dump(), std::nullopt);
   return {

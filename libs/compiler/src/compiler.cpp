@@ -11,7 +11,6 @@
 #include <sqlite3.h>
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
@@ -222,6 +221,28 @@ std::string normalize_match_text(const std::string_view text) {
       }
       normalized.push_back(static_cast<char>(std::tolower(byte)));
       pending_space = false;
+    } else if (character == '+' || character == '#' || character == '&' ||
+               character == '@') {
+      if (!normalized.empty() && normalized.back() != ' ') {
+        normalized.push_back(' ');
+      }
+      switch (character) {
+        case '+':
+          normalized += "plus";
+          break;
+        case '#':
+          normalized += "sharp";
+          break;
+        case '&':
+          normalized += "and";
+          break;
+        case '@':
+          normalized += "at";
+          break;
+        default:
+          break;
+      }
+      pending_space = true;
     } else {
       pending_space = !normalized.empty();
     }
@@ -236,40 +257,67 @@ bool contains_phrase(const std::string& normalized_text,
   return padded_text.find(padded_phrase) != std::string::npos;
 }
 
-/// Title and alias matches dominate topic-specific keyword matches. The score
-/// is used only for deterministic ordering; every positive match is retained.
-std::size_t relevance_score(const std::string& source_name,
-                            const std::string& page_text) {
-  constexpr std::string_view title = "markov chains";
-  constexpr std::string_view alias = "markov chain";
-  constexpr std::array<std::string_view, 8> keywords{
-      "markov property",       "transition probability",
-      "transition probabilities", "transition matrix",
-      "state transition",     "stochastic matrix",
-      "memoryless",           "memorylessness"};
+std::vector<std::string> concept_terms(const std::string& normalized_title) {
+  // Function words do not distinguish topics, but remain part of the higher
+  // confidence full-title phrase match above this fallback.
+  static const std::unordered_set<std::string> stop_words{
+      "a", "an", "and", "as", "at", "by", "for", "from", "in",
+      "into", "of", "on", "or", "the", "to", "with"};
+  std::istringstream input(normalized_title);
+  std::vector<std::string> all_terms;
+  std::vector<std::string> meaningful_terms;
+  for (std::string term; input >> term;) {
+    all_terms.push_back(term);
+    if (!stop_words.contains(term)) {
+      meaningful_terms.push_back(std::move(term));
+    }
+  }
+  return meaningful_terms.empty() ? all_terms : meaningful_terms;
+}
 
+bool contains_term_variant(const std::string& normalized_text,
+                           const std::string& term) {
+  if (contains_phrase(normalized_text, term)) {
+    return true;
+  }
+  // A small deterministic singular/plural fallback covers common concept
+  // title differences without embedding domain-specific aliases.
+  if (term.size() > 3U && term.ends_with('s')) {
+    return contains_phrase(normalized_text,
+                           std::string_view(term).substr(0, term.size() - 1U));
+  }
+  return contains_phrase(normalized_text, term + "s");
+}
+
+bool contains_all_terms(const std::string& normalized_text,
+                        const std::vector<std::string>& terms) {
+  return !terms.empty() &&
+         std::ranges::all_of(terms, [&](const std::string& term) {
+           return contains_term_variant(normalized_text, term);
+         });
+}
+
+/// Full concept-title matches dominate all-term matches. The score is used
+/// only for deterministic ordering; it contains no subject-specific keywords.
+std::size_t relevance_score(const std::string& source_name,
+                            const std::string& page_text,
+                            const std::string& concept_title) {
   const auto normalized_name = normalize_match_text(source_name);
   const auto normalized_text = normalize_match_text(page_text);
+  const auto normalized_title = normalize_match_text(concept_title);
+  const auto terms = concept_terms(normalized_title);
   std::size_t score = 0;
-  if (contains_phrase(normalized_name, title)) {
+  if (contains_phrase(normalized_name, normalized_title)) {
     score += 1'000;
   }
-  if (contains_phrase(normalized_text, title)) {
+  if (contains_phrase(normalized_text, normalized_title)) {
     score += 800;
   }
-  if (contains_phrase(normalized_name, alias)) {
-    score += 600;
+  if (contains_all_terms(normalized_name, terms)) {
+    score += 300;
   }
-  if (contains_phrase(normalized_text, alias)) {
-    score += 400;
-  }
-  for (const auto keyword : keywords) {
-    if (contains_phrase(normalized_name, keyword)) {
-      score += 40;
-    }
-    if (contains_phrase(normalized_text, keyword)) {
-      score += 20;
-    }
+  if (contains_all_terms(normalized_text, terms)) {
+    score += 200;
   }
   return score;
 }
@@ -443,10 +491,24 @@ class Compiler::Impl {
         candidate.normalized_source_name =
             normalize_match_text(candidate.source_name);
         candidate.relevance_score =
-            relevance_score(candidate.source_name, candidate.page.text);
-        if (candidate.relevance_score != 0U) {
+            relevance_score(candidate.source_name, candidate.page.text,
+                            options.concept_title);
+        if (candidate.relevance_score != 0U || !requested_sources.empty()) {
           candidates.push_back(std::move(candidate));
         }
+      }
+
+      // Explicit source filters are a human-curated escape hatch for topics
+      // that are described implicitly, symbolically, or in another language.
+      // If lexical matching found anything, keep its normal precision.
+      const auto has_lexical_match =
+          std::ranges::any_of(candidates, [](const CandidatePage& candidate) {
+            return candidate.relevance_score != 0U;
+          });
+      if (has_lexical_match) {
+        std::erase_if(candidates, [](const CandidatePage& candidate) {
+          return candidate.relevance_score == 0U;
+        });
       }
 
       std::ranges::sort(candidates, [](const CandidatePage& left,
@@ -484,11 +546,12 @@ class Compiler::Impl {
     if (pages.empty()) {
       throw CompilerError(
           CompilerErrorKind::no_evidence,
-          "no extracted pages matched the Markov Chains title, alias, or "
-          "keywords");
+          "no usable extracted pages matched concept '" +
+              options.concept_title +
+              "'; pass --source to compile from explicitly curated sources");
     }
 
-    const auto target = find_article_target();
+    const auto target = find_article_target(options.concept_title);
     models::ProposalGenerationRequest request{
         .concept_title = options.concept_title,
         .operation = target.operation,
@@ -496,7 +559,7 @@ class Compiler::Impl {
         .pages = std::move(pages)};
     models::ModelRunResult model_result;
     try {
-      model_result = model_runner_->generate_markov_chains(request);
+      model_result = model_runner_->generate_concept(request);
     } catch (const models::ModelError& error) {
       throw CompilerError(compiler_kind(error.kind()), error.what());
     }
@@ -550,10 +613,22 @@ class Compiler::Impl {
   }
 
   static void validate_options(const CompileOptions& options) {
-    if (options.concept_title != "Markov Chains") {
+    const auto normalized_title = normalize_whitespace(options.concept_title);
+    const auto unsafe_character = std::ranges::any_of(
+        options.concept_title, [](const char character) {
+          const auto byte = static_cast<unsigned char>(character);
+          constexpr std::string_view invalid_filename_characters =
+              "/\\<>:\"|?*";
+          return invalid_filename_characters.find(character) !=
+                     std::string_view::npos ||
+                 byte < 0x20U || byte == 0x7FU;
+        });
+    if (normalized_title.empty() || options.concept_title.size() > 200U ||
+        unsafe_character) {
       throw CompilerError(
-          CompilerErrorKind::unsupported_concept,
-          "MVP compilation supports exactly 'Markov Chains'");
+          CompilerErrorKind::invalid_concept,
+          "concept title must be 1-200 bytes and contain no unsafe filename "
+          "or control characters");
     }
     for (const auto& source_id : options.source_ids) {
       if (source_id.value.empty()) {
@@ -595,14 +670,15 @@ class Compiler::Impl {
     return result;
   }
 
-  [[nodiscard]] ArticleTarget find_article_target() const {
+  [[nodiscard]] ArticleTarget find_article_target(
+      const std::string_view concept_title) const {
     try {
       storage::Database database(state_path());
       Statement statement(
           database.native_handle(),
           "SELECT article_id FROM articles WHERE title = ? COLLATE NOCASE "
           "LIMIT 1");
-      statement.bind_text(1, "Markov Chains");
+      statement.bind_text(1, concept_title);
       if (statement.step() == SQLITE_ROW) {
         return {
             .operation = domain::ProposalOperation::update_article,
@@ -674,7 +750,9 @@ class Compiler::Impl {
       storage::Database database(state_path());
       Transaction transaction(database);
 
-      // A newer proposal replaces older review work for the same MVP article.
+      // A newer proposal supersedes review work only for the same concept.
+      // The JSON title predicate prevents unrelated new concept proposals from
+      // superseding each other before either one has an article ID.
       Statement supersede(
           database.native_handle(),
           article_id
@@ -682,10 +760,10 @@ class Compiler::Impl {
                 "WHERE article_id = ? AND status IN ('pending', 'approved')"
               : "UPDATE proposals SET status = 'superseded' "
                 "WHERE article_id IS NULL AND operation = 'create_article' "
-                "AND status IN ('pending', 'approved')");
-      if (article_id) {
-        supersede.bind_text(1, article_id->value);
-      }
+                "AND json_extract(payload_json, '$.article.title') = ? "
+                "COLLATE NOCASE AND status IN ('pending', 'approved')");
+      supersede.bind_text(1, article_id ? article_id->value
+                                        : proposal.article.title);
       static_cast<void>(supersede.step());
 
       const nlohmann::json payload = proposal;

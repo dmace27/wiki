@@ -1,7 +1,7 @@
 # Knowledge Compiler Technical Documentation
 
-These documents are the implementation contract for the Personal Probability
-Compiler MVP. Agents should preserve these contracts unless they update the
+These documents are the implementation contract for the subject-neutral
+Knowledge Compiler MVP. Agents should preserve these contracts unless they update the
 relevant document and explain the migration.
 
 | Document | Use it for |
@@ -23,5 +23,5 @@ relevant document and explain the migration.
 4. The user approves a proposal before the compiler writes the Obsidian vault.
 5. User-authored Markdown is never overwritten. The compiler only owns content
    between its managed-section markers.
-6. The first end-to-end target is one useful, source-linked `Markov Chains.md`
-   article produced from real probability notes.
+6. Each end-to-end target is one useful, source-linked concept article produced
+   from real notes in any subject.

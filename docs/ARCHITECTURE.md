@@ -33,8 +33,10 @@ flowchart LR
   A["PDF, Markdown, or text notes"] --> B["Import and hash"]
   B --> C["Extraction: text, render, OCR"]
   C --> D["SQLite page records"]
-  D --> E["Local LLM structured proposal"]
-  E --> F["Schema and citation validation"]
+  T["Requested concept title"] --> E["Generic concept compiler"]
+  D --> E
+  E --> J["Local LLM structured proposal"]
+  J --> F["Schema, identity, and citation validation"]
   F --> G["User review and approval"]
   G --> H["Obsidian Markdown vault"]
   H --> I["SQLite FTS article search"]
@@ -91,9 +93,11 @@ class VaultWriter;
 class SearchIndex;
 ```
 
-`LanguageModel` receives selected, page-referenced text and returns a JSON
-proposal conforming to [Data contracts](DATA_CONTRACTS.md). It never receives a
-filesystem-writing capability.
+`LanguageModel` receives an arbitrary requested concept title plus selected,
+page-referenced text and returns a JSON proposal conforming to
+[Data contracts](DATA_CONTRACTS.md). The compiler owns deterministic concept
+identity and evidence selection; the model never receives a filesystem-writing
+capability.
 
 ## Security and ownership rules
 
@@ -108,6 +112,6 @@ filesystem-writing capability.
 
 ## Explicitly deferred
 
-Semantic embeddings, automatic reconciliation across arbitrary concepts,
+Semantic embeddings, bulk concept discovery, automatic semantic reconciliation,
 filesystem watch mode, a graph visualizer, cloud synchronization, broad API
 support, conflict detection, and a full custom note editor are not MVP work.

@@ -1,73 +1,113 @@
-Make one narrow end-to-end prototype: **compile your probability notes into a searchable Markov Chains article.**
+# Knowledge Compiler MVP
 
-Call it a “Personal Probability Compiler.” Its only job is:
+Build one trustworthy end-to-end system that turns uploaded learning material
+from **any subject** into searchable, source-grounded concept articles. Markov
+chains is a useful test case, not a product boundary.
 
-1. Import a few of your real Goodnotes PDFs and Markdown notes.
-2. Extract their text locally, retaining page numbers and images.
-3. Find notes related to Markov chains.
-4. Use a local model to draft one `Markov Chains.md` article from those notes.
-5. Link every section or claim back to the original note page.
-6. Open the article in Obsidian.
+The MVP works one concept at a time so every result stays reviewable:
 
-Success means you can search “Markov chains,” read a useful article in language close to your own notes, and jump back to the pages where you learned it.
+1. Import real PDF, scanned-PDF, Markdown, and text notes from any domain.
+2. Extract text locally while retaining document versions, page numbers, and
+   page images.
+3. Ask for an article by concept title, such as “Markov Chains,” “Cellular
+   Respiration,” “The French Revolution,” or “Color Theory.”
+4. Select relevant pages using the concept title and its meaningful terms. If
+   the concept is described implicitly, allow the user to nominate source files
+   as curated evidence.
+5. Use a local model to draft a schema-validated article adapted to the subject.
+6. Link every generated section or claim to exact spans in the uploaded notes.
+7. Review and approve the proposal before writing or updating an Obsidian page.
+8. Search across all approved concept articles by title, alias, and content.
 
-A good first article structure is:
+Success means a user can upload mixed learning material, compile several
+unrelated concepts, read useful articles in language close to their own notes,
+and jump back to the exact pages where they learned each idea. Creating a
+proposal for one new concept must never overwrite or supersede work for another.
 
-```
-# Markov Chains
+## Article contract
+
+The structure is intentionally domain-neutral. The model adapts the contents of
+each section to the evidence instead of assuming a mathematical topic.
+
+```markdown
+# <Concept title>
 
 ## My working explanation
 ...
 
 ## Key ideas
-- State
-- Transition probability
-- Markov property
-- Stationary distribution
+- ...
 
 ## Example
 ...
 
 ## Related concepts
-- [[Conditional Probability]]
-- [[Random Variables]]
-- [[Random Walks]]
+- [[Another concept]]
 
 ## Sources
-- Probability Notes, Week 8, page 3
-- Probability Notes, Week 9, page 1
+- Source name, page N
 ```
 
-Build the prototype in this order:
+Every generated block and related-concept link requires at least one verified
+citation. A section may be omitted when the uploaded evidence does not support
+it; the model must not fill gaps with outside knowledge.
 
-1. **Local import and extraction** — support Markdown plus a small set of your actual PDFs.
-2. **Extraction review** — show the text beside each source page, because handwriting/OCR quality determines everything downstream.
-3. **One local-model prompt** — turn selected extracted pages into schema-validated content for one article.
-4. **Markdown writer** — create the page in an Obsidian vault, preserving source links.
-5. **Simple search** — search article titles and article text; semantic search can come later.
-6. **Expand to five concepts** — for example Markov Chains, Conditional Probability, Bayes’ Rule, Random Variables, and Random Walks.
+## Product boundaries
 
+“Any subject” means the concept pipeline contains no hard-coded domain,
+vocabulary, aliases, article title, or output filename. It does not mean every
+possible file format or perfect automatic concept discovery in the first
+release.
 
-Tech Stack:
-C++23 + CMake compiler/CLI, 
-SQLite, 
-Poppler,
-pluggable OCR, 
-Ollama/Gemma adapter, 
-and a later local web review UI. 
+The MVP supports:
 
+- arbitrary safe concept titles and deterministic concept slugs;
+- subject-neutral prompts and validation;
+- deterministic title/term evidence matching across all active sources;
+- explicit source curation for implicit, symbolic, niche, or non-English topics;
+- independent create/update proposals for multiple concepts;
+- local extraction, model execution, review, vault writing, and search.
 
-| Order | Agent task | Deliverable / done when |
-|---|---|---|
-| 0 | **Technical lead: define the MVP contract and scaffold** | Select the stack, create project structure, define source/extraction/article JSON schemas, SQLite tables, citation-link format, CLI commands, and a sample project configuration. Local processing must be the default; API provider remains an interface only. |
-| 1A | **Import/state agent** | `import` command for Markdown, TXT, and PDF files; immutable source IDs and content hashes; source metadata and original-file registration/copying recorded in SQLite. Re-importing an unchanged file is idempotent. |
-| 1B | **PDF extraction agent** | Per-page extraction pipeline: direct PDF text first, rendered page images retained, and a pluggable local OCR adapter for scanned pages. Output is normalized page records with source ID, page number, text, image path, and extraction status. |
-| 1C | **Local-model agent** | A local LLM provider adapter (for example, Ollama + Gemma) and a strict structured-output prompt. Given selected page records, it returns schema-validated proposed content for exactly one concept: Markov Chains. No arbitrary Markdown generation. |
-| 2A | **Concept-selection/compiler agent** | Finds Markov-chain-relevant extracted pages using deterministic keyword/alias matching initially, invokes the local model, validates citations against actual page records, and writes a reviewable proposed change set. |
-| 2B | **Vault writer agent** | Converts an approved proposal into `vault/Markov Chains.md`, preserving the required sections, `[[Concept Links]]`, and source links such as `[_sources/probability-notes.pdf#page=3]`. Must never overwrite a user-authored file without an explicit approval flag. |
-| 2C | **Review experience agent** | A minimal local review surface: show each PDF page image beside extracted text, allow text correction, display the proposed article/diff and cited source pages, then approve or reject the proposal. This can be a lightweight local web UI—do not build a full editor. |
-| 3A | **Search agent** | Local concept-first search over generated article titles and body text. Searching “markov chains” should return the generated article and open its Markdown file / provide its Obsidian path. |
-| 3B | **End-to-end QA agent** | Add fixtures using a Markdown note and a small, permitted PDF; test import → extraction → review → compile → approval → vault write → search. Manually test against your actual Goodnotes export and record OCR limitations. |
-| 4 | **Expansion agent** | Generalize only after the full loop works: Conditional Probability, Bayes’ Rule, Random Variables, and Random Walks. Add incremental updates to existing concept pages and basic duplicate-title protection. |
+Defer embeddings, automatic ontology construction, bulk concept discovery,
+daemonized ingestion, a full graph editor, cloud APIs, and a custom web UI until
+the generic one-concept loop works well on several genuinely different subjects.
 
+## Build order
 
+1. **Local import and extraction** — support Markdown, text, and representative
+   PDFs from several domains.
+2. **Extraction review** — show extracted text beside its source page and allow
+   corrections before model use.
+3. **Generic local-model prompt** — generate structured content for the exact
+   requested concept using only selected evidence.
+4. **Generic concept selection** — match the requested title and meaningful
+   terms; accept explicitly curated sources when text does not name the concept.
+5. **Review and Markdown writer** — validate citations, show the proposed change,
+   require approval, and safely create or update `<Concept title>.md`.
+6. **Concept-first search** — search every applied article by title, aliases, and
+   body text.
+7. **Cross-domain QA** — prove the complete workflow with at least three
+   unrelated concepts and both automatic and curated evidence selection.
+
+## Technical stack
+
+- C++23 and CMake for the compiler and CLI
+- SQLite for durable state and local full-text search
+- Poppler plus pluggable local OCR for PDFs and scans
+- a provider-neutral language-model interface with Ollama/Gemma as the first
+  local adapter
+- Obsidian-compatible Markdown output
+- a later local web review UI
+
+| Order | Deliverable | Done when |
+| --- | --- | --- |
+| 0 | Generic contracts and scaffold | Schemas, database tables, CLI commands, safe concept identity rules, and local-first configuration contain no subject-specific restriction. |
+| 1A | Import and immutable state | Markdown, text, and PDF sources are hashed, copied locally, versioned, and idempotent. |
+| 1B | Per-page extraction | Native PDF text is preferred, page images are retained, OCR is pluggable, and each page has an explicit review status. |
+| 1C | Generic model adapter | Given a requested title and selected pages, the local model returns only a schema-valid proposal with exact-span citations. |
+| 2A | Concept compiler | Arbitrary concepts use deterministic title/term matching or explicit source curation; existing articles are detected by requested title. |
+| 2B | Safe vault writer | An approved proposal creates or updates `<Concept title>.md`, preserves unmanaged content, links sources, and never silently overwrites user files. |
+| 2C | Review experience | Users can correct extraction, inspect proposal diffs and evidence, and approve or reject without implicit vault writes. |
+| 3A | Search | All applied concepts are searchable locally by title, aliases, and article body. |
+| 3B | End-to-end QA | Import → extract → review → compile → approve → apply → search passes for unrelated topics such as probability, biology, and history. |
+| 4 | Later expansion | Add bulk concept suggestions, embeddings, topic maps, and automatic relationship inference without weakening provenance or review. |

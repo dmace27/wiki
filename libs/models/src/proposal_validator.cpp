@@ -1,5 +1,7 @@
 #include "kc/models/proposal_validator.hpp"
 
+#include "kc/models/concept.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <regex>
@@ -44,6 +46,17 @@ std::string normalize_whitespace(const std::string_view text) {
   return normalized;
 }
 
+bool has_unsafe_title_character(const std::string_view title) {
+  return std::ranges::any_of(title, [](const char character) {
+    const auto byte = static_cast<unsigned char>(character);
+    constexpr std::string_view invalid_filename_characters =
+        "/\\<>:\"|?*";
+    return invalid_filename_characters.find(character) !=
+               std::string_view::npos ||
+           byte < 0x20U || byte == 0x7FU;
+  });
+}
+
 using PageIndex =
     std::unordered_map<std::string, const domain::ExtractedPage*>;
 
@@ -79,9 +92,13 @@ void validate_citation(const domain::Citation& citation,
 domain::ValidationResult ProposalValidator::validate_request(
     const ProposalGenerationRequest& request) const {
   domain::ValidationResult result;
-  if (request.concept_title != "Markov Chains") {
+  if (normalize_whitespace(request.concept_title).empty()) {
+    add_issue(result, "/concept", "must not be empty or whitespace-only");
+  } else if (request.concept_title.size() > 200U) {
+    add_issue(result, "/concept", "must not exceed 200 bytes");
+  } else if (has_unsafe_title_character(request.concept_title)) {
     add_issue(result, "/concept",
-              "MVP prompt supports exactly 'Markov Chains'");
+              "must not contain unsafe filename or control characters");
   }
   if (request.pages.empty()) {
     add_issue(result, "/pages", "must contain at least one evidence page");
@@ -133,11 +150,13 @@ domain::ValidationResult ProposalValidator::validate_response(
   if (proposal.operation != request.operation) {
     add_issue(result, "/operation", "must match the requested operation");
   }
-  if (proposal.article.title != "Markov Chains") {
-    add_issue(result, "/article/title", "must equal 'Markov Chains'");
+  if (proposal.article.title != request.concept_title) {
+    add_issue(result, "/article/title",
+              "must exactly match the requested concept title");
   }
-  if (proposal.article.slug != "markov-chains") {
-    add_issue(result, "/article/slug", "must equal 'markov-chains'");
+  if (proposal.article.slug != canonical_concept_slug(request.concept_title)) {
+    add_issue(result, "/article/slug",
+              "must equal the canonical slug for the requested concept");
   }
 
   if (request.operation == domain::ProposalOperation::create_article &&

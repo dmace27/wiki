@@ -1,8 +1,9 @@
 # Knowledge Compiler
 
-Knowledge Compiler turns PDFs, scans, and Markdown learning notes into a personal,
-source-grounded Obsidian knowledge base. The MVP targets one trustworthy loop:
-compile probability notes into a cited, reviewable `Markov Chains.md` article.
+Knowledge Compiler turns PDFs, scans, and Markdown learning notes from any
+subject into a personal, source-grounded Obsidian knowledge base. The MVP uses
+one trustworthy, repeatable loop to compile any requested concept into a cited,
+reviewable article.
 
 ## Foundation build
 
@@ -70,7 +71,8 @@ Corrections are intentionally refused after a proposal cites the page, so
 proposal citation offsets and quotes remain immutable.
 
 The local model layer uses the Ollama settings in `kc.json` to request a
-schema-constrained Markov Chains proposal. It validates all returned citations
+schema-constrained proposal for the selected concept. It validates the exact
+requested title, its canonical slug, and all returned citations
 against supplied page text and records a redacted `model_runs` audit entry.
 Compile relevant extracted pages into a pending proposal with:
 
@@ -79,10 +81,12 @@ Compile relevant extracted pages into a pending proposal with:
 ```
 
 Add one or more `--source src_01J...` options to restrict the evidence set.
-Compilation deterministically matches title, alias, and topic keywords, stores
-normalized citations transactionally, and never writes vault files. Invalid
-model output remains only a redacted failed model run and cannot become a
-pending proposal.
+Compilation deterministically matches the requested title and its meaningful
+terms across source names and page text. If a concept is only implicit, passing
+one or more `--source src_01J...` options treats those sources as curated
+evidence when no lexical match exists. The compiler stores normalized citations
+transactionally and never writes vault files. Invalid model output remains only
+a redacted failed model run and cannot become a pending proposal.
 
 Approve a reviewed proposal, then apply it as a separate operation:
 
@@ -104,7 +108,7 @@ after that replacement succeeds. Existing generated articles retain every byte
 outside their `kc:managed` markers, and the complete previous file is backed up
 under `.knowledge-compiler/backups/`.
 
-If a create proposal collides with an untracked `Markov Chains.md`, `kc apply`
+If a create proposal collides with an untracked `<Concept title>.md`, `kc apply`
 refuses to overwrite it. After reviewing that exact collision, the explicit
 `--allow-overwrite-user-file` flag permits replacement and still creates a
 recovery backup.

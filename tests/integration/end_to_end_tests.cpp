@@ -162,7 +162,8 @@ TEST_CASE("import through apply produces a searchable source-linked article") {
   kc::compiler::Compiler compiler(
       project_root, std::make_unique<StaticLanguageModel>(
                         proposal_for(correction.page_id.value).dump()));
-  const auto compiled = compiler.compile({});
+  const auto compiled =
+      compiler.compile({.concept_title = "Markov Chains"});
   CHECK(compiled.selected_page_count == 1U);
 
   kc::storage::Database database(initialized.state_path);

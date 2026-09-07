@@ -332,7 +332,7 @@ nlohmann::json search_success_json(
 int compiler_exit_code(const kc::compiler::CompilerErrorKind kind) {
   switch (kind) {
     case kc::compiler::CompilerErrorKind::invalid_project:
-    case kc::compiler::CompilerErrorKind::unsupported_concept:
+    case kc::compiler::CompilerErrorKind::invalid_concept:
       return 2;
     case kc::compiler::CompilerErrorKind::source_not_found:
     case kc::compiler::CompilerErrorKind::no_evidence:
@@ -353,8 +353,8 @@ std::string_view compiler_error_code(
   switch (kind) {
     case kc::compiler::CompilerErrorKind::invalid_project:
       return "invalid_project";
-    case kc::compiler::CompilerErrorKind::unsupported_concept:
-      return "unsupported_concept";
+    case kc::compiler::CompilerErrorKind::invalid_concept:
+      return "invalid_concept";
     case kc::compiler::CompilerErrorKind::source_not_found:
       return "source_not_found";
     case kc::compiler::CompilerErrorKind::no_evidence:

@@ -1,9 +1,9 @@
 # The models library owns the filesystem-isolated LanguageModel boundary,
-# Ollama HTTP integration, structured Markov Chains prompt, response
+# Ollama HTTP integration, structured concept prompt, response
 # validation, and auditable model-run persistence.
 add_library(kc_models STATIC
   src/curl_http_client.cpp
-  src/markov_chains_prompt.cpp
+  src/concept_prompt.cpp
   src/model_runner.cpp
   src/ollama_language_model.cpp
   src/proposal_validator.cpp

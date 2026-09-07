@@ -4,13 +4,15 @@ The compiler library implements MVP step 2A. It is the application service
 between extracted page state and the approval-gated proposal tables; it never
 writes vault files.
 
-For `Markov Chains`, evidence selection:
+For any requested concept, evidence selection:
 
 - reads only active sources and each source's latest immutable version;
 - excludes failed, empty, and unreviewed OCR pages;
 - optionally restricts selection to explicit `--source` IDs;
-- matches the title (`Markov Chains`), alias (`Markov chain`), and a fixed set
-  of topic-specific keywords; and
+- ranks exact title matches above matches containing every meaningful title
+  term, with a small singular/plural fallback;
+- treats explicitly filtered sources as curated evidence when no lexical match
+  exists; and
 - orders matches by a stable relevance score, normalized source name, source
   ID, page number, and page ID.
 

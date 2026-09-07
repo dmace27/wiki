@@ -15,7 +15,7 @@ namespace kc::compiler {
 
 /// The user-controlled inputs to one proposal compilation.
 struct CompileOptions {
-  std::string concept_title{"Markov Chains"};
+  std::string concept_title;
   std::vector<domain::SourceId> source_ids;
 };
 
@@ -31,7 +31,7 @@ struct CompileResult {
 
 enum class CompilerErrorKind {
   invalid_project,
-  unsupported_concept,
+  invalid_concept,
   source_not_found,
   no_evidence,
   model_failed,

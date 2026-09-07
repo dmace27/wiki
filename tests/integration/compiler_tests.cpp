@@ -63,14 +63,16 @@ class StaticLanguageModel final : public kc::models::LanguageModel {
 };
 
 nlohmann::json create_proposal(const std::string& page_id,
-                               const std::size_t end_char = 14U) {
+                               const std::size_t end_char = 14U,
+                               const std::string_view title = "Markov Chains",
+                               const std::string_view slug = "markov-chains") {
   return {
       {"schema_version", 1},
       {"operation", "create_article"},
       {"article",
-       {{"title", "Markov Chains"},
-        {"slug", "markov-chains"},
-        {"aliases", nlohmann::json::array({"Markov chain"})}}},
+       {{"title", title},
+        {"slug", slug},
+        {"aliases", nlohmann::json::array()}}},
       {"sections",
        nlohmann::json::array(
            {{{"key", "working_explanation"},
@@ -120,9 +122,9 @@ TEST_CASE("compiler evidence selection is relevant, latest-only, and determinist
   const auto title_source = import_and_extract(
       project_root, temporary.path() / "Markov Chains Overview.md",
       "An overview of a discrete process.\n");
-  const auto keyword_source = import_and_extract(
+  const auto term_source = import_and_extract(
       project_root, temporary.path() / "Lecture 8.md",
-      "A transition matrix describes movement between states.\n");
+      "A Markov chain describes movement between states.\n");
   static_cast<void>(import_and_extract(
       project_root, temporary.path() / "Bayes Notes.md",
       "Posterior distributions update prior beliefs.\n"));
@@ -139,22 +141,67 @@ TEST_CASE("compiler evidence selection is relevant, latest-only, and determinist
   auto state = std::make_shared<ModelState>();
   kc::compiler::Compiler compiler(
       project_root, std::make_unique<StaticLanguageModel>(state));
-  const auto pages = compiler.select_evidence({});
+  const auto pages =
+      compiler.select_evidence({.concept_title = "Markov Chains"});
 
   REQUIRE(pages.size() == 2U);
   CHECK(pages[0].source_version_id == title_source.version.source_version_id);
-  CHECK(pages[1].source_version_id == keyword_source.version.source_version_id);
+  CHECK(pages[1].source_version_id == term_source.version.source_version_id);
 
   const auto filtered = compiler.select_evidence(
-      {.source_ids = {keyword_source.source.source_id}});
+      {.concept_title = "Markov Chains",
+       .source_ids = {term_source.source.source_id}});
   REQUIRE(filtered.size() == 1U);
   CHECK(filtered.front().source_version_id ==
-        keyword_source.version.source_version_id);
+        term_source.version.source_version_id);
 
   CHECK_THROWS_AS(
       compiler.select_evidence(
-          {.source_ids = {{"src_01J99999999999999999999999"}}}),
+          {.concept_title = "Markov Chains",
+           .source_ids = {{"src_01J99999999999999999999999"}}}),
       kc::compiler::CompilerError);
+}
+
+TEST_CASE("evidence selection supports arbitrary and curated concepts") {
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  static_cast<void>(
+      kc::storage::initialize_project(init_options(project_root)));
+
+  const auto biology = import_and_extract(
+      project_root, temporary.path() / "Plant Biology.md",
+      "Photosynthesis captures light energy in chemical bonds.\n");
+  const auto implicit = import_and_extract(
+      project_root, temporary.path() / "Lecture Notes.md",
+      "Mitochondria convert nutrients into usable cellular energy.\n");
+  const auto programming = import_and_extract(
+      project_root, temporary.path() / "Systems Programming.md",
+      "C++ uses RAII to tie resources to object lifetimes.\n");
+
+  auto state = std::make_shared<ModelState>();
+  kc::compiler::Compiler compiler(
+      project_root, std::make_unique<StaticLanguageModel>(state));
+
+  const auto automatic =
+      compiler.select_evidence({.concept_title = "Photosynthesis"});
+  REQUIRE(automatic.size() == 1U);
+  CHECK(automatic.front().source_version_id ==
+        biology.version.source_version_id);
+
+  const auto symbolic =
+      compiler.select_evidence({.concept_title = "C++"});
+  REQUIRE(symbolic.size() == 1U);
+  CHECK(symbolic.front().source_version_id ==
+        programming.version.source_version_id);
+
+  // The requested concept is implicit in this page, so an explicit source
+  // filter deliberately treats the source as human-curated evidence.
+  const auto curated = compiler.select_evidence(
+      {.concept_title = "Cellular Respiration",
+       .source_ids = {implicit.source.source_id}});
+  REQUIRE(curated.size() == 1U);
+  CHECK(curated.front().source_version_id ==
+        implicit.version.source_version_id);
 }
 
 TEST_CASE("unreviewed OCR cannot reach the model") {
@@ -181,7 +228,8 @@ TEST_CASE("unreviewed OCR cannot reach the model") {
       project_root, std::make_unique<StaticLanguageModel>(state));
   try {
     static_cast<void>(compiler.compile(
-        {.source_ids = {imported.source.source_id}}));
+        {.concept_title = "Markov Chains",
+         .source_ids = {imported.source.source_id}}));
     FAIL("expected unreviewed OCR to produce no eligible evidence");
   } catch (const kc::compiler::CompilerError& error) {
     CHECK(error.kind() == kc::compiler::CompilerErrorKind::no_evidence);
@@ -196,7 +244,8 @@ TEST_CASE("unreviewed OCR cannot reach the model") {
       version_id + "'");
   state->response = create_proposal(page_id).dump();
   const auto compiled = compiler.compile(
-      {.source_ids = {imported.source.source_id}});
+      {.concept_title = "Markov Chains",
+       .source_ids = {imported.source.source_id}});
   CHECK(compiled.selected_page_count == 1U);
   CHECK(state->prompts.size() == 1U);
 }
@@ -219,7 +268,8 @@ TEST_CASE("compile stores one pending proposal and normalized citations") {
   kc::compiler::Compiler compiler(
       project_root, std::make_unique<StaticLanguageModel>(state));
 
-  const auto first = compiler.compile({});
+  const auto first =
+      compiler.compile({.concept_title = "Markov Chains"});
 
   CHECK(first.operation ==
         kc::domain::ProposalOperation::create_article);
@@ -243,7 +293,8 @@ TEST_CASE("compile stores one pending proposal and normalized citations") {
   CHECK(state->prompts.front().find(page_id) != std::string::npos);
 
   // A newer immutable proposal supersedes earlier review work atomically.
-  const auto second = compiler.compile({});
+  const auto second =
+      compiler.compile({.concept_title = "Markov Chains"});
   CHECK(second.proposal_id != first.proposal_id);
   CHECK(database.scalar_integer(
             "SELECT COUNT(*) FROM proposals WHERE status = 'pending'") == 1);
@@ -274,7 +325,8 @@ TEST_CASE("invalid generated blocks remain failed model runs, not proposals") {
       project_root, std::make_unique<StaticLanguageModel>(state));
 
   try {
-    static_cast<void>(compiler.compile({}));
+    static_cast<void>(
+        compiler.compile({.concept_title = "Markov Chains"}));
     FAIL("expected compiler validation failure");
   } catch (const kc::compiler::CompilerError& error) {
     CHECK(error.kind() ==
@@ -289,4 +341,37 @@ TEST_CASE("invalid generated blocks remain failed model runs, not proposals") {
       database.scalar_text("SELECT response_json FROM model_runs"));
   CHECK(diagnostic.at("redacted") == true);
   CHECK(std::filesystem::is_empty(project_root / "vault"));
+}
+
+TEST_CASE("pending create proposals are superseded per concept") {
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  const auto initialized =
+      kc::storage::initialize_project(init_options(project_root));
+  const auto imported = import_and_extract(
+      project_root, temporary.path() / "mixed-notes.md",
+      "A Markov chain and Photosynthesis are unrelated examples.\n");
+
+  kc::storage::Database database(initialized.state_path);
+  const auto page_id = database.scalar_text(
+      "SELECT page_id FROM source_pages WHERE source_version_id = '" +
+      imported.version.source_version_id.value + "'");
+  auto state = std::make_shared<ModelState>();
+  kc::compiler::Compiler compiler(
+      project_root, std::make_unique<StaticLanguageModel>(state));
+
+  state->response = create_proposal(page_id).dump();
+  static_cast<void>(
+      compiler.compile({.concept_title = "Markov Chains"}));
+  state->response =
+      create_proposal(page_id, 14U, "Photosynthesis", "photosynthesis")
+          .dump();
+  static_cast<void>(
+      compiler.compile({.concept_title = "Photosynthesis"}));
+
+  CHECK(database.scalar_integer(
+            "SELECT COUNT(*) FROM proposals WHERE status = 'pending'") == 2);
+  CHECK(database.scalar_integer(
+            "SELECT COUNT(*) FROM proposals WHERE status = 'superseded'") ==
+        0);
 }

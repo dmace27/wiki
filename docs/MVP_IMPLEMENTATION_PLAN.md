@@ -1,161 +1,129 @@
-  MVP Implementation Plan
+# MVP Implementation Plan
 
 ## Outcome
 
-The MVP is complete when a user can import real probability notes, inspect or
-correct their page extraction, compile a cited `Markov Chains.md` proposal with
-a local model, approve it, write it safely to an Obsidian vault, and find it
-with local keyword search.
+The MVP is complete when a user can import real notes from unrelated subjects,
+inspect or correct their extraction, compile any requested concept into a cited
+proposal with a local model, approve it, write it safely to an Obsidian vault,
+and find it with local search.
+
+Concepts are compiled one at a time to keep selection, provenance, and review
+understandable. No production component may contain subject-specific titles,
+aliases, vocabulary, or output paths.
 
 ## Work sequence
 
 ### 0. Foundation and contracts
 
-**Owner:** technical lead
+Create the C++/CMake skeleton, migration runner, and documented domain types.
 
-Create the C++/CMake skeleton, vcpkg manifest, test runner, migration runner,
-and the domain types defined in the documentation set.
+Acceptance criteria:
 
-**Acceptance criteria**
-
-- `kc init` creates a valid project without requiring a model or OCR runtime.
-- The SQLite migration succeeds on a fresh project.
-- All JSON fixtures validate against the documented schemas.
-- The build enables warnings and sanitizer-enabled test presets.
+- `kc init` creates a valid project without requiring model or OCR runtimes.
+- SQLite migrations succeed on a fresh project.
+- JSON fixtures validate against the documented schemas.
+- Concept identity accepts arbitrary safe titles and uses deterministic slugs.
 
 ### 1A. Source import and immutable state
 
-**Owner:** import/state agent
+Implement Markdown, text, and PDF registration, SHA-256 hashing, deduplication,
+and immutable source-version storage.
 
-mplement Markdown, TXT, and PDF registration, SHA-256 hashing, deduplication,
-and source-version storage.
+Acceptance criteria:
 
-**Acceptance criteria**
-
-- An unchanged source re-import is idempotent.
-- Changed content creates a new `source_version` rather than modifying history.
-- The project retains an immutable copy of every imported file; source links
-  remain valid even if the original file is moved or deleted.
-- No absolute path is persisted in the project database.
+- Unchanged re-imports are idempotent; changed content creates a new version.
+- Retained local copies keep citations valid if originals move or disappear.
+- No absolute path is persisted in project state.
 
 ### 1B. Page extraction
 
-**Owner:** PDF/OCR agent
+Implement native PDF text extraction, page rendering, and a pluggable local OCR
+adapter, plus logical-page extraction for Markdown and text.
 
-Implement direct text extraction for text PDFs, page rendering for PDFs, and a
-pluggable local OCR adapter for pages without usable native text.
+Acceptance criteria:
 
-**Acceptance criteria**
+- Every source page has text, page identity, and an explicit review status.
+- Rendered images use project-relative paths.
+- Failed or unreviewed OCR never silently reaches the model.
 
-- Every PDF page produces a `source_pages` row with a page number.
-- Rendered page images are retained using project-relative paths.
-- Markdown/TXT imports create one logical page.
-- Failed OCR is represented as `failed`; it is never silently treated as good
-  text.
+### 1C. Generic local model and structured output
 
-### 1C. Local model and structured output
+Implement an Ollama-compatible `LanguageModel` adapter and one subject-neutral,
+schema-constrained concept prompt.
 
-**Owner:** model agent
+Acceptance criteria:
 
-Implement an Ollama-compatible local `LanguageModel` adapter and a
-schema-constrained Markov Chains prompt.
+- The request includes the exact target title, canonical slug, operation, and
+  page-referenced evidence.
+- The prompt treats all evidence as untrusted source material.
+- Invalid JSON, wrong concept identity, or invalid citations produce only a
+  redacted `invalid_response` model run.
+- The provider cannot write vault files.
 
-**Acceptance criteria**
+### 2A. Generic compiler and proposal validation
 
-- The adapter reads model settings from `kc.json`.
-- It records provider, model, prompt version, hashes, status, and a redacted
-  diagnostic record.
-- Invalid JSON or invalid citations yield `invalid_response` and no proposal.
-- No provider implementation can write vault files.
+Select evidence by requested title and meaningful title terms across source
+names and page text. When lexical matching finds nothing, explicitly supplied
+`--source` filters act as human-curated evidence for implicit or niche topics.
 
-### 2A. Compiler and proposal validation
+Acceptance criteria:
 
-**Owner:** compiler agent
-
-Select Markov-chain-relevant pages with deterministic title, alias, and keyword
-matching. Call the model, validate its proposal, and store the proposal and
-normalized citations.
-
-**Acceptance criteria**
-
-- `kc compile --concept "Markov Chains"` creates a pending proposal.
-- Every generated block has at least one valid citation.
-- Citation offsets and normalized quotes match extracted text.
-- Invalid proposals are stored only as failed model runs, not pending proposals.
+- `kc compile --concept TITLE` works for safe titles from any subject.
+- `kc compile --concept TITLE --source SOURCE_ID...` supports implicit topics.
+- Existing articles are detected by the requested title, case-insensitively.
+- Multiple unapplied concepts retain independent pending proposals.
+- Every block and relationship has a verified exact-span citation.
 
 ### 2B. Safe Markdown writer
 
-**Owner:** vault agent
+Render approved proposals into the documented Obsidian format and apply them
+atomically.
 
-Render an approved proposal into the documented Obsidian Markdown format and
-atomically apply it.
+Acceptance criteria:
 
-**Acceptance criteria**
-
-- Citation footnotes point to a copied or linked source PDF at the cited page.
-- Existing user-authored text outside managed markers remains byte-for-byte
-  unchanged.
-- The old file is backed up before write and each application is recorded.
-- Search indexing occurs after a successful write only.
+- Citations point to retained source documents and exact pages.
+- User-authored text outside managed markers is unchanged.
+- Existing files are backed up, and untracked collisions require an explicit
+  overwrite flag.
+- Search state updates only after a successful write.
 
 ### 2C. Extraction and proposal review
 
-**Owner:** review-surface agent
+Provide a minimal review experience in the terminal, with a local browser UI
+remaining optional.
 
-Implement a minimal review experience. It may begin as terminal output plus a
-local browser page, but it must make source evidence inspectable.
+Acceptance criteria:
 
-**Acceptance criteria**
+- Reviewers can inspect page images, extracted text, and status together.
+- Text can be corrected before it is cited.
+- Proposal sections, diffs, and source evidence are visible before approval.
+- Review actions never edit article content directly.
 
-- A reviewer can see page image, extracted text, and extraction status together.
-- A reviewer can correct page text before compilation.
-- A reviewer can inspect proposal sections and their citations before approving.
-- The review surface does not edit the article itself.
+### 3. Search and cross-domain verification
 
-**Implemented terminal surface**
+Implement SQLite FTS and an integration path covering import, extraction,
+proposal creation, approval, apply, and search.
 
-- `kc review extraction` presents each page's image path, extracted text, and
-  status together and supports guarded inline/file-based correction.
-- `kc proposal list/show/reject`, together with the approval command, provides
-  proposal inspection and review decisions without exposing article editing.
-- Proposal inspection joins normalized citations to the complete cited source
-  page evidence before approval.
+Acceptance criteria:
 
-### 3. Search and end-to-end verification
+- Title, alias, and article-body search works across all applied concepts.
+- Automated tests cover at least two unrelated domains plus curated evidence.
+- Manual QA uses representative notes from at least three domains, including a
+  scanned PDF, and records OCR/source-link limitations.
 
-**Owner:** search/QA agent
+### 4. Later expansion
 
-Implement SQLite FTS search and a full integration test path using permitted
-fixtures plus manual testing on actual probability notes.
-
-**Acceptance criteria**
-
-- `kc search "markov chains"` returns the article title and vault path.
-- A test covers import, extraction, proposal creation, approval, apply, and
-  search.
-- Manual results document OCR accuracy and source-link behavior in Obsidian.
-
-### 4. Five-concept expansion
-
-Only after the Markov Chains workflow is useful, generalize it to Conditional
-Probability, Bayes' Rule, Random Variables, and Random Walks.
-
-**Acceptance criteria**
-
-- Existing article titles are reused instead of creating duplicates.
-- New proposals remain source-linked and approval-gated.
-- Topic maps, embeddings, and automatic relationship inference remain deferred.
+After the generic single-concept loop is useful, add bulk concept suggestions,
+embeddings, topic maps, and automatic relationship inference. These features
+must preserve the same source-grounding, immutable proposal, and approval
+boundaries.
 
 ## Dependency graph
 
 ```text
 Foundation
   ├── Import/state ──┐
-  ├── Page extraction├── Compiler/proposals ── Vault writer ── Search/QA
-  └── Local model ───┘                │
-                                      └── Review surface
+  ├── Page extraction├── Generic compiler ── Vault writer ── Search/QA
+  └── Local model ───┘              │
+                                    └── Review surface
 ```
-
-Agents may work in parallel only after their input/output contract is stable.
-No agent should change another agent's public data contract without updating the
-documentation and migration/version plan.

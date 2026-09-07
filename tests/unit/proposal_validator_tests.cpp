@@ -1,4 +1,5 @@
 #include "kc/domain/json.hpp"
+#include "kc/models/concept.hpp"
 #include "kc/models/proposal_validator.hpp"
 #include "../test_support.hpp"
 
@@ -65,12 +66,32 @@ TEST_CASE("citation comparison normalizes whitespace but enforces bounds") {
   CHECK_FALSE(validator.validate_response(proposal, request));
 }
 
-TEST_CASE("the MVP request rejects concepts other than Markov Chains") {
+TEST_CASE("requests accept arbitrary safe concept titles") {
   kc::models::ProposalValidator validator;
   auto request = request_for(fixture_page());
   request.concept_title = "Bayes' Rule";
 
+  CHECK(validator.validate_request(request));
+
+  request.concept_title = "../unsafe";
   CHECK_FALSE(validator.validate_request(request));
+}
+
+TEST_CASE("proposal title must match the requested concept") {
+  kc::models::ProposalValidator validator;
+  const auto request = request_for(fixture_page());
+  auto proposal = fixture_proposal();
+  proposal.article.title = "Unrelated Topic";
+
+  CHECK_FALSE(validator.validate_response(proposal, request));
+}
+
+TEST_CASE("concept slugs are generic and deterministic") {
+  CHECK(kc::models::canonical_concept_slug("Bayes' Rule") == "bayes-rule");
+  CHECK(kc::models::canonical_concept_slug("C++") == "c-plus-plus");
+  const auto non_latin = kc::models::canonical_concept_slug("量子力学");
+  CHECK(non_latin.starts_with("concept-"));
+  CHECK(non_latin.size() == 24U);
 }
 
 TEST_CASE("model requests accept only usable extraction review states") {

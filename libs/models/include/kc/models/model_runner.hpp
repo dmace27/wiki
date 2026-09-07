@@ -52,7 +52,7 @@ class ModelRunner {
   ModelRunner(std::filesystem::path project_root,
               std::unique_ptr<LanguageModel> language_model);
 
-  [[nodiscard]] ModelRunResult generate_markov_chains(
+  [[nodiscard]] ModelRunResult generate_concept(
       const ProposalGenerationRequest& request);
 
  private:

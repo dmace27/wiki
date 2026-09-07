@@ -7,9 +7,9 @@
 
 namespace kc::models {
 
-/// Evidence and target identity supplied to the Markov Chains model prompt.
+/// Evidence and target identity supplied to the generic concept model prompt.
 struct ProposalGenerationRequest {
-  std::string concept_title{"Markov Chains"};
+  std::string concept_title;
   domain::ProposalOperation operation{
       domain::ProposalOperation::create_article};
   std::optional<domain::ArticleId> article_id;

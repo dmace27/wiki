@@ -96,7 +96,7 @@ TEST_CASE("Ollama settings, schema prompt, and completed runs are audited") {
   http->next_response = ollama_envelope(valid_proposal().dump());
   kc::models::ModelRunner runner(project_root, http);
 
-  const auto result = runner.generate_markov_chains(generation_request());
+  const auto result = runner.generate_concept(generation_request());
 
   CHECK(result.status == kc::domain::ModelRunStatus::completed);
   REQUIRE(result.proposal.has_value());
@@ -124,7 +124,7 @@ TEST_CASE("Ollama settings, schema prompt, and completed runs are audited") {
   CHECK(database.scalar_text("SELECT model FROM model_runs") ==
         "fixture-gemma:1b");
   CHECK(database.scalar_text("SELECT prompt_version FROM model_runs") ==
-        "markov-chains-v1");
+        "concept-v1");
   CHECK(database.scalar_text("SELECT status FROM model_runs") == "completed");
   CHECK(database.scalar_text("SELECT request_sha256 FROM model_runs").size() ==
         64);
@@ -152,7 +152,7 @@ TEST_CASE("invalid JSON is redacted and cannot create a proposal") {
   http->next_response = ollama_envelope(std::string(secret_response));
   kc::models::ModelRunner runner(project_root, http);
 
-  const auto result = runner.generate_markov_chains(generation_request());
+  const auto result = runner.generate_concept(generation_request());
 
   CHECK(result.status == kc::domain::ModelRunStatus::invalid_response);
   CHECK_FALSE(result.proposal.has_value());
@@ -168,6 +168,33 @@ TEST_CASE("invalid JSON is redacted and cannot create a proposal") {
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals") == 0);
 }
 
+TEST_CASE("model runner accepts a non-mathematical concept target") {
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  static_cast<void>(
+      kc::storage::initialize_project(init_options(project_root)));
+
+  auto proposal = valid_proposal();
+  proposal["article"]["title"] = "Photosynthesis";
+  proposal["article"]["slug"] = "photosynthesis";
+  auto request = generation_request();
+  request.concept_title = "Photosynthesis";
+
+  auto http = std::make_shared<RecordingHttpClient>();
+  http->next_response = ollama_envelope(proposal.dump());
+  kc::models::ModelRunner runner(project_root, http);
+  const auto result = runner.generate_concept(request);
+
+  CHECK(result.status == kc::domain::ModelRunStatus::completed);
+  REQUIRE(result.proposal.has_value());
+  CHECK(result.proposal->article.title == "Photosynthesis");
+  const auto body = nlohmann::json::parse(http->last_request.json_body);
+  const auto prompt = body.at("messages")[1].at("content").get<std::string>();
+  CHECK(prompt.find("Photosynthesis") != std::string::npos);
+  CHECK(prompt.find("\"slug\": \"photosynthesis\"") !=
+        std::string::npos);
+}
+
 TEST_CASE("invalid citations become invalid_response with no proposal") {
   kc::test::TemporaryDirectory temporary;
   const auto project_root = temporary.path() / "project";
@@ -180,7 +207,7 @@ TEST_CASE("invalid citations become invalid_response with no proposal") {
   http->next_response = ollama_envelope(invalid.dump());
   kc::models::ModelRunner runner(project_root, http);
 
-  const auto result = runner.generate_markov_chains(generation_request());
+  const auto result = runner.generate_concept(generation_request());
 
   CHECK(result.status == kc::domain::ModelRunStatus::invalid_response);
   CHECK_FALSE(result.proposal.has_value());
@@ -203,7 +230,7 @@ TEST_CASE("HTTP failures store only a fixed redacted diagnostic") {
       .body = R"({"error":"Bearer highly-sensitive-token"})"};
   kc::models::ModelRunner runner(project_root, http);
 
-  const auto result = runner.generate_markov_chains(generation_request());
+  const auto result = runner.generate_concept(generation_request());
 
   CHECK(result.status == kc::domain::ModelRunStatus::failed);
   CHECK_FALSE(result.proposal.has_value());
