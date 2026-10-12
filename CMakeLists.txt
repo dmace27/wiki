@@ -1,5 +1,16 @@
 cmake_minimum_required(VERSION 3.25)
 
+# Set these before project() loads vcpkg: its target-creation wrappers capture
+# the policies active when the toolchain is read. Apple ld can resolve static
+# archives without repeating them, so newer CMake versions can deduplicate.
+# Older CMake versions retain their compatible (but noisier) link ordering.
+if(POLICY CMP0156)
+  cmake_policy(SET CMP0156 NEW)
+endif()
+if(POLICY CMP0179)
+  cmake_policy(SET CMP0179 NEW)
+endif()
+
 # Define the root project and require C++ as its implementation language.
 project(
   knowledge_compiler
@@ -27,8 +38,13 @@ if(KC_ENABLE_SANITIZERS)
 endif()
 
 find_package(CLI11 CONFIG REQUIRED)
-find_package(CURL REQUIRED)
+# Require the manifest's curl package instead of falling back to a system SDK.
+# Its imported target also carries the correct static-library dependencies.
+find_package(CURL CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+# The pinned sqlite3 port probes ICU for every static build, even without its
+# unicode feature. Our manifest uses FTS5 and JSON1 only; ICU is not a dependency.
+set(CMAKE_DISABLE_FIND_PACKAGE_ICU ON)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 
 # Build each layer after its third-party dependencies are available.

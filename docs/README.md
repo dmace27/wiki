@@ -7,6 +7,7 @@ relevant document and explain the migration.
 | Document | Use it for |
 | --- | --- |
 | [Architecture](ARCHITECTURE.md) | System boundaries, stack, project layout, and safety rules. |
+| [Development baseline](DEVELOPMENT_BASELINE.md) | Persistent dependency bootstrap, selected target/tool versions, and clean preset verification. |
 | [Implementation plan](MVP_IMPLEMENTATION_PLAN.md) | Task order, ownership, dependencies, and acceptance criteria. |
 | [CLI contract](CLI_CONTRACT.md) | Command names, arguments, output conventions, and MVP workflow. |
 | [Data contracts](DATA_CONTRACTS.md) | IDs, JSON schemas, citation validation, and Markdown rendering format. |

@@ -7,22 +7,103 @@ reviewable article.
 
 ## Foundation build
 
-The project uses C++23, CMake, and vcpkg manifest mode. Install CMake, Ninja, and
-vcpkg, set `VCPKG_ROOT`, then run:
+The project uses C++23, CMake, Ninja, and vcpkg manifest mode. The supported
+development target for this baseline is **macOS on Apple Silicon** with the
+`arm64-osx` triplet. Other platforms still need their own clean verification
+before being advertised as supported.
+
+| Tool | Requirement | Verified version |
+| --- | --- | --- |
+| Compiler / standard library | Apple Clang 21 with matching Xcode Command Line Tools; C++23 | Apple Clang 21.0.0 (`clang-2100.1.1.101`) |
+| CMake | 3.25 or newer (preset schema 6 and `--fresh`) | 4.4.0 |
+| Ninja | 1.11 or newer | 1.13.2 |
+| Git | 2.x; required by vcpkg versioned manifests | See the [baseline verification](docs/DEVELOPMENT_BASELINE.md) |
+| vcpkg checkout | Exact commit below, matching `vcpkg.json` | Tool release 2026-04-08 |
+
+Install the Command Line Tools with `xcode-select --install` if needed. Install
+CMake, Ninja, and Git, for example with `brew install cmake ninja git`, and
+confirm `clang++ --version`, `cmake --version`, `ninja --version`, and
+`git --version` before configuring. PDF/OCR programs and Ollama are not needed
+to build or run the deterministic tests.
+
+From the repository root, create a dedicated **persistent** vcpkg checkout.
+The Git checkout pins both port definitions and bootstrap tool metadata; the
+manifest's `builtin-baseline` pins dependency versions. Keep both pins together
+when deliberately upgrading dependencies. Use a full clone, not a shallow
+clone, so vcpkg can read the versioned port history.
 
 ```bash
-cmake --preset dev
-cmake --build --preset dev
+export VCPKG_ROOT="$HOME/.local/share/knowledge-compiler/vcpkg"
+mkdir -p "$(dirname "$VCPKG_ROOT")"
+git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+git -C "$VCPKG_ROOT" checkout --detach d015e31e90838a4c9dfa3eed45979bc70d9357fc
+"$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+```
+
+For an existing dedicated checkout, skip `git clone`, fetch its history with
+`git -C "$VCPKG_ROOT" fetch origin`, then repeat checkout and bootstrap. Export
+`VCPKG_ROOT` in every new shell, or save that export in your shell configuration.
+Do not put this checkout under `/tmp` or inside `build/`.
+
+The first configure downloads and compiles the manifest dependencies and needs
+internet access. The presets install them into `$VCPKG_ROOT/installed-kc`,
+shared across the three configurations and retained when build directories are
+recreated. Downloads and dependency build trees also stay under `VCPKG_ROOT`.
+No global `vcpkg integrate install`, existing CMake cache, or manually supplied
+`CMAKE_PREFIX_PATH` is required. To reproduce the source-only dependency check,
+set `export VCPKG_BINARY_SOURCES=clear` before the first configure; normal
+development may use vcpkg's default binary cache.
+
+Configure from fresh state, build, and run the development tests:
+
+```bash
+cmake --fresh --preset dev
+cmake --build --preset dev --parallel 4
 ctest --preset dev
 ```
 
 For warnings-as-errors with AddressSanitizer and UndefinedBehaviorSanitizer:
 
 ```bash
-cmake --preset sanitized
-cmake --build --preset sanitized
+cmake --fresh --preset sanitized
+cmake --build --preset sanitized --parallel 4
 ctest --preset sanitized
 ```
+
+Build the optimized executable separately:
+
+```bash
+cmake --fresh --preset release
+cmake --build --preset release --parallel 4
+```
+
+`release` intentionally disables test targets; test results come from `dev` and
+`sanitized`. All presets select the native triplet (`arm64-osx` on the supported
+host); an explicit triplet override requires a fresh configuration and matching
+compiler architecture. `--fresh` discards old CMake cache/toolchain paths while
+retaining installed dependencies. For a completely empty application build
+tree, rename the corresponding `build/dev`, `build/sanitized`, or
+`build/release` directory first. Never copy another developer's build cache.
+
+If configuration refers to `/scripts/buildsystems/vcpkg.cmake`, `VCPKG_ROOT`
+was not exported. If it refers to an old `/tmp` path, export the persistent root
+and run the `--fresh` configure command again. Use the same compiler and SDK for
+all three presets; after changing them, reconfigure each preset so vcpkg can
+rebuild dependencies for the new compiler ABI.
+
+ICU is **not** part of this baseline: SQLite enables FTS5 and default JSON1,
+without its optional `unicode` feature. The pinned SQLite port otherwise makes
+an unnecessary optional ICU lookup for static libraries; the project disables
+that lookup. This does not add Unicode case folding to SQLite's `NOCASE`.
+Curl must come from the manifest's CMake config package, rather than the macOS
+system SDK. CMake 3.29+ uses linker-aware archive deduplication (CMP0156), with
+first-occurrence ordering on 3.31+ (CMP0179). CMake 3.25–3.28 can still emit
+Apple linker warnings about repeated static libraries; those repetitions are
+dependency ordering, not duplicate object definitions. Prefer the verified
+CMake version for a warning-free build.
+
+See [the dated clean-build evidence](docs/DEVELOPMENT_BASELINE.md) for dependency
+versions, test results, and the release smoke check.
 
 Initialize a project without starting Ollama or Tesseract:
 

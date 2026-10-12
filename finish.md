@@ -37,11 +37,13 @@ Follow the numbering as the recommended completion order. P0 means a correctness
 
 **Evidence:** `CMakePresets.json`, `vcpkg.json`, `README.md`; the development preset build currently fails on the stale temporary toolchain path.
 
-- [ ] Set up a persistent vcpkg checkout and document bootstrap/version requirements alongside the pinned manifest baseline. Reconfigure from a fresh build directory instead of relying on old cache paths.
-- [ ] Prove the documented `dev`, `sanitized`, and `release` presets work with a clean dependency setup. Keep dependencies installed outside disposable temporary paths.
-- [ ] Record supported compiler/CMake/Ninja versions and selected platform targets. Investigate the ICU discovery and duplicate-library warnings; document whether ICU is intended rather than treating it as an unexplained requirement.
+- [x] Set up a persistent vcpkg checkout and document bootstrap/version requirements alongside the pinned manifest baseline. Reconfigure from a fresh build directory instead of relying on old cache paths.
+- [x] Prove the documented `dev`, `sanitized`, and `release` presets work with a clean dependency setup. Keep dependencies installed outside disposable temporary paths.
+- [x] Record supported compiler/CMake/Ninja versions and selected platform targets. Investigate the ICU discovery and duplicate-library warnings; document whether ICU is intended rather than treating it as an unexplained requirement.
 
 **Done when:** another developer can follow the README from a clean checkout to build and run the tests without inheriting this machine's caches. This is the baseline for all subsequent verification.
+
+**Completed October 12, 2026:** [README bootstrap/build instructions](README.md#foundation-build) and [dated verification evidence](docs/DEVELOPMENT_BASELINE.md) establish the macOS arm64 development baseline. A new persistent vcpkg checkout at the unchanged manifest baseline built dependencies from source with binary-cache reuse disabled. All three presets passed in fresh configurations and an independent source snapshot: `dev` and `sanitized` each passed 57/57 tests; `release` built and passed the CLI initialization/idempotency smoke check. Final builds resolve the manifest's curl package and produce no ICU discovery or duplicate-library warnings.
 
 ### 2. Fix logical source identity before importing real note collections — P0
 
