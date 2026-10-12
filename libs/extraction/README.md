@@ -8,7 +8,7 @@ The extraction library implements MVP step 1B.
   become one logical page with `native` text status.
 - PDFs are rendered at 150 DPI with Poppler's `pdftoppm`. Every rendered page
   receives a numbered `source_pages` row and a retained PNG under
-  `.knowledge-compiler/pages/<source_version_id>/`.
+  `.knowledge-compiler/pages/<source_version_id>/<run_id>/`.
 - Poppler's `pdftotext` attempts native extraction one page at a time.
 - Pages without usable native text are passed to the configured local
   `OcrProvider`. The default adapter invokes Tesseract with the language from
@@ -33,3 +33,13 @@ retry.
 
 Both PDF and OCR integrations are interfaces. Tests inject deterministic local
 adapters and command runners without contacting external services.
+
+## Integrity and concurrency
+
+Source bytes, cached text, and images must match their recorded SHA-256 values.
+PDF adapters read a verified private source snapshot. Each attempt owns unique
+images and publishes only if its page snapshot/revisions remain current under
+the SQLite write lock. Corrections and captured proposal context cannot be
+silently overwritten. All text boundaries require UTF-8 without embedded NULs.
+See [task-six rules and verification](../../docs/EXTRACTION_INTEGRITY.md) for
+canonical path ownership, migration 004, image repair, and two-process races.

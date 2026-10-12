@@ -20,7 +20,10 @@ For any requested concept, evidence selection:
 parses and validates the model response. Valid citation quotes are canonicalized
 from their exact UTF-8 byte spans by trimming and collapsing whitespace. The
 compiler then creates the immutable pending proposal and all normalized
-`proposal_citations` in one SQLite transaction. A newer proposal supersedes
+`proposal_citations` plus all selected `proposal_evidence` in one SQLite
+transaction. Page revisions, exact bytes/status, current source versions, and
+retained source/image hashes are rechecked under the publication write lock.
+Changed evidence rejects publication before any pending work is superseded. A newer proposal supersedes
 older pending or approved work for the same article.
 
 Invalid JSON, missing block citations, foreign page IDs, invalid byte offsets,
@@ -31,3 +34,6 @@ Concept lookup, pending supersession, and collision checks share the
 [concept identity contract](../../docs/CONCEPT_IDENTITY.md). The compiler resolves
 stored display spelling/slugs before calling the model and rechecks identity
 and destination ownership under the proposal publication transaction.
+
+See [extraction integrity](../../docs/EXTRACTION_INTEGRITY.md) for evidence
+freezing, supported concurrency, and reproduction.

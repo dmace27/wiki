@@ -1,5 +1,8 @@
 #include "kc/extraction/extractor.hpp"
 
+#include "kc/import/integrity.hpp"
+#include "kc/domain/path.hpp"
+
 #include "kc/domain/id.hpp"
 #include "kc/domain/json.hpp"
 #include "kc/import/sha256.hpp"
@@ -30,6 +33,7 @@ struct SourceRecord {
   domain::SourceVersionId version_id;
   domain::SourceKind kind;
   std::filesystem::path stored_path;
+  std::string sha256;
 };
 
 class Statement {
@@ -94,7 +98,8 @@ class Statement {
     const auto* value = sqlite3_column_text(statement_, column);
     return value == nullptr
                ? std::string{}
-               : std::string(reinterpret_cast<const char*>(value));
+               : std::string(reinterpret_cast<const char*>(value),
+                             static_cast<std::size_t>(sqlite3_column_bytes(statement_, column)));
   }
 
   [[nodiscard]] std::int64_t integer(const int column) const {
@@ -119,8 +124,10 @@ class StagingDirectory {
 
   ~StagingDirectory() {
     std::error_code ignored;
-    std::filesystem::remove_all(path_, ignored);
+    if (!path_.empty()) std::filesystem::remove_all(path_, ignored);
   }
+
+  void release() noexcept { path_.clear(); }
 
   StagingDirectory(const StagingDirectory&) = delete;
   StagingDirectory& operator=(const StagingDirectory&) = delete;
@@ -156,7 +163,21 @@ bool is_safe_relative(const std::filesystem::path& path) {
   });
 }
 
+/// Resolve containment again for services reused after directories change.
+std::filesystem::path checked_state_path(const std::filesystem::path& root,
+                                         const domain::ProjectConfig& config) {
+  try {
+    domain::validate_project_paths(root, config);
+  } catch (const std::invalid_argument& error) {
+    throw ExtractionError(ExtractionErrorKind::invalid_project, error.what());
+  }
+  return root / config.paths.state;
+}
+
 domain::ProjectConfig read_config(const std::filesystem::path& root) {
+  if (!domain::is_within(root, root / "kc.json")) {
+    throw ExtractionError(ExtractionErrorKind::invalid_project, "configuration escapes project root");
+  }
   const auto config_path = root / "kc.json";
   std::ifstream input(config_path);
   if (!input) {
@@ -176,6 +197,11 @@ domain::ProjectConfig read_config(const std::filesystem::path& root) {
       throw ExtractionError(
           ExtractionErrorKind::invalid_project,
           "invalid project configuration: " + detail);
+    }
+    try {
+      domain::validate_project_paths(root, *parsed.value);
+    } catch (const std::invalid_argument& error) {
+      throw ExtractionError(ExtractionErrorKind::invalid_project, error.what());
     }
     return *parsed.value;
   } catch (const nlohmann::json::exception& error) {
@@ -205,7 +231,7 @@ SourceRecord find_latest_source_version(
   Statement statement(
       connection,
       "SELECT s.source_id, v.source_version_id, s.source_kind, v.stored_path "
-      "FROM sources s JOIN source_versions v ON v.source_id = s.source_id "
+      " , v.sha256 FROM sources s JOIN source_versions v ON v.source_id = s.source_id "
       "WHERE s.source_id = ? AND s.archived_at IS NULL "
       "ORDER BY v.rowid DESC LIMIT 1");
   statement.bind_text(1, source_id.value);
@@ -219,7 +245,8 @@ SourceRecord find_latest_source_version(
       .source_id = {statement.text(0)},
       .version_id = {statement.text(1)},
       .kind = parse_kind(statement.text(2)),
-      .stored_path = statement.text(3)};
+      .stored_path = domain::path_from_utf8(statement.text(3)),
+      .sha256 = statement.text(4)};
   if (!is_safe_relative(result.stored_path)) {
     throw ExtractionError(
         ExtractionErrorKind::state_error,
@@ -228,11 +255,30 @@ SourceRecord find_latest_source_version(
   return result;
 }
 
+/// Compare complete durable page state, not only citation substrings.
+std::string page_snapshot(sqlite3* connection,
+                          const domain::SourceVersionId& version_id) {
+  Statement query(connection,
+      "SELECT page_id, page_number, image_path, text, text_status, text_sha256, "
+      "evidence_revision, image_sha256 FROM source_pages "
+      "WHERE source_version_id = ? ORDER BY page_number");
+  query.bind_text(1, version_id.value);
+  auto rows = nlohmann::json::array();
+  while (query.step() == SQLITE_ROW) {
+    rows.push_back({query.text(0), query.integer(1), query.text(2),
+                    query.text(3), query.text(4), query.text(5),
+                    query.integer(6), query.text(7)});
+  }
+  return rows.dump();
+}
+
 std::vector<domain::ExtractedPage> read_existing_pages(
-    sqlite3* connection, const domain::SourceVersionId& version_id) {
+    sqlite3* connection, const domain::SourceVersionId& version_id,
+    const std::filesystem::path& root, const domain::ProjectConfig& config,
+    const bool verify_files) {
   Statement statement(
       connection,
-      "SELECT page_id, page_number, image_path, text, text_status "
+      "SELECT page_id, page_number, image_path, text, text_status, text_sha256, image_sha256 "
       "FROM source_pages WHERE source_version_id = ? ORDER BY page_number");
   statement.bind_text(1, version_id.value);
   std::vector<domain::ExtractedPage> pages;
@@ -244,12 +290,21 @@ std::vector<domain::ExtractedPage> read_existing_pages(
             static_cast<std::uint32_t>(statement.integer(1)),
         .text = statement.text(3)};
     if (!statement.is_null(2)) {
-      page.image_path = statement.text(2);
+      page.image_path = domain::path_from_utf8(statement.text(2));
       if (!is_safe_relative(*page.image_path)) {
         throw ExtractionError(
             ExtractionErrorKind::state_error,
             "project database contains an unsafe rendered page path");
       }
+    }
+    if (!domain::is_valid_source_text(page.text) ||
+        source_import::sha256_text(page.text) != statement.text(5)) {
+      throw ExtractionError(ExtractionErrorKind::invalid_state,
+                            "cached page text has invalid encoding or SHA-256");
+    }
+    if (verify_files && page.image_path) {
+      source_import::verify_retained_file(root / config.paths.cache,
+          root / *page.image_path, statement.text(6));
     }
     const auto status = statement.text(4);
     if (status == "native") {
@@ -270,15 +325,16 @@ std::vector<domain::ExtractedPage> read_existing_pages(
   return pages;
 }
 
-/// Refuse to replace extraction state once a proposal has captured page-local
-/// citation offsets. This mirrors the review service's correction boundary.
+/// Refuse to replace extraction state once a proposal captures citations or
+/// generation context. This mirrors the review correction boundary.
 void ensure_pages_are_not_cited(
     sqlite3* connection, const domain::SourceVersionId& version_id) {
   Statement statement(
       connection,
       "SELECT p.page_id FROM source_pages p "
-      "WHERE p.source_version_id = ? AND EXISTS ("
+      "WHERE p.source_version_id = ? AND (EXISTS ("
       "SELECT 1 FROM proposal_citations pc WHERE pc.page_id = p.page_id) "
+      "OR EXISTS (SELECT 1 FROM proposal_evidence pe WHERE pe.page_id = p.page_id)) "
       "ORDER BY p.page_number LIMIT 1");
   statement.bind_text(1, version_id.value);
   if (statement.step() == SQLITE_ROW) {
@@ -395,44 +451,61 @@ void mark_run_failed(
 }
 
 void upsert_page(sqlite3* connection,
-                 const domain::ExtractedPage& page) {
+                 const domain::ExtractedPage& page,
+                 const std::filesystem::path& root) {
   Statement statement(
       connection,
       "INSERT INTO source_pages("
       "page_id, source_version_id, page_number, image_path, text, "
-      "text_status, text_sha256) VALUES (?, ?, ?, ?, ?, ?, ?) "
+      "text_status, text_sha256, image_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
       "ON CONFLICT(source_version_id, page_number) DO UPDATE SET "
       "image_path = excluded.image_path, text = excluded.text, "
-      "text_status = excluded.text_status, text_sha256 = excluded.text_sha256");
+      "text_status = excluded.text_status, text_sha256 = excluded.text_sha256, "
+      "image_sha256 = excluded.image_sha256, "
+      "evidence_revision = source_pages.evidence_revision + 1");
   statement.bind_text(1, page.page_id.value);
   statement.bind_text(2, page.source_version_id.value);
   statement.bind_integer(3, static_cast<std::int64_t>(page.page_number));
   if (page.image_path) {
-    statement.bind_text(4, page.image_path->generic_string());
+    statement.bind_text(4, domain::path_to_utf8(*page.image_path));
   } else {
     statement.bind_null(4);
   }
   statement.bind_text(5, page.text);
   statement.bind_text(6, domain::to_string(page.text_status));
   statement.bind_text(7, source_import::sha256_text(page.text));
+  if (page.image_path) {
+    statement.bind_text(8, source_import::sha256_file(root / *page.image_path));
+  } else {
+    statement.bind_null(8);
+  }
   static_cast<void>(statement.step());
 }
 
 void persist_result(storage::Database& database,
                     const domain::RunId& run_id,
                     const domain::SourceVersionId& version_id,
-                    const bool replacing_existing_pages,
+                    const std::string& expected_snapshot,
+                    const std::filesystem::path& root,
                     const std::vector<domain::ExtractedPage>& pages,
                     const std::size_t failed_pages) {
   database.execute("BEGIN IMMEDIATE;");
   try {
     // Repeat the citation check under the write lock. A compiler process may
     // have created a proposal while rendering or OCR was still in progress.
-    if (replacing_existing_pages) {
-      ensure_pages_are_not_cited(database.native_handle(), version_id);
+    if (page_snapshot(database.native_handle(), version_id) != expected_snapshot) {
+      throw ExtractionError(ExtractionErrorKind::invalid_state,
+                            "page evidence changed during extraction; retry");
     }
+    ensure_pages_are_not_cited(database.native_handle(), version_id);
+    // Removed pages must not survive a shorter re-extraction.
+    Statement remove(database.native_handle(),
+        "DELETE FROM source_pages WHERE source_version_id = ? AND page_number > ?");
+    remove.bind_text(1, version_id.value);
+    remove.bind_integer(2, static_cast<std::int64_t>(pages.size()));
+    static_cast<void>(remove.step());
     for (const auto& page : pages) {
-      upsert_page(database.native_handle(), page);
+      upsert_page(database.native_handle(), page, root);
     }
     const auto message =
         failed_pages == 0U
@@ -470,7 +543,7 @@ Extractor::Extractor(std::filesystem::path project_root)
                               config_.providers.ocr.language)
                         : nullptr) {
   if (!std::filesystem::is_regular_file(
-          project_root_ / config_.paths.state)) {
+          checked_state_path(project_root_, config_))) {
     throw ExtractionError(
         ExtractionErrorKind::invalid_project,
         "project state database does not exist; run 'kc init' first");
@@ -492,7 +565,7 @@ Extractor::Extractor(std::filesystem::path project_root,
       pdf_adapter_(std::move(pdf_adapter)),
       ocr_provider_(std::move(ocr_provider)) {
   if (!std::filesystem::is_regular_file(
-          project_root_ / config_.paths.state)) {
+          checked_state_path(project_root_, config_))) {
     throw ExtractionError(
         ExtractionErrorKind::invalid_project,
         "project state database does not exist; run 'kc init' first");
@@ -506,18 +579,25 @@ Extractor::Extractor(std::filesystem::path project_root,
 
 ExtractionResult Extractor::extract(
     const domain::SourceId& source_id, const bool force) {
-  storage::Database database(project_root_ / config_.paths.state);
-  const auto source =
-      find_latest_source_version(database.native_handle(), source_id);
+  static_cast<void>(read_config(project_root_));
+  storage::Database database(checked_state_path(project_root_, config_));
+  // Both readers share one SQLite snapshot; no lock is held across adapters.
+  database.execute("BEGIN;");
+  const auto source = find_latest_source_version(database.native_handle(), source_id);
   const auto retained_path = project_root_ / source.stored_path;
-  if (!std::filesystem::is_regular_file(retained_path)) {
-    throw ExtractionError(
-        ExtractionErrorKind::source_not_found,
-        "retained source file is missing: " + source.stored_path.string());
+  std::vector<domain::ExtractedPage> existing;
+  std::string expected_snapshot;
+  try {
+    source_import::verify_retained_file(project_root_ / config_.paths.sources,
+                                      retained_path, source.sha256);
+    existing = read_existing_pages(database.native_handle(), source.version_id,
+                                   project_root_, config_, !force);
+    expected_snapshot = page_snapshot(database.native_handle(), source.version_id);
+    database.execute("COMMIT;");
+  } catch (const std::exception& error) {
+    database.execute("ROLLBACK;");
+    throw ExtractionError(ExtractionErrorKind::invalid_state, error.what());
   }
-
-  const auto existing =
-      read_existing_pages(database.native_handle(), source.version_id);
   if (!force && !existing.empty()) {
     return {
         .source_id = source.source_id,
@@ -545,10 +625,27 @@ ExtractionResult Extractor::extract(
   insert_run(
       database.native_handle(), run_id, source, extractor_name, ocr_name);
 
+  const auto output_directory = config_.paths.cache / "pages" /
+                                source.version_id.value / run_id.value;
   try {
+    if (!domain::is_within(project_root_ / config_.paths.cache,
+                           project_root_ / output_directory)) {
+      throw ExtractionError(ExtractionErrorKind::invalid_project, "unsafe page output path");
+    }
+    // Each attempt owns its images. Failed or stale attempts remove only their
+    // own directory; previously published images are never overwritten.
+    StagingDirectory output(project_root_ / output_directory);
     std::vector<domain::ExtractedPage> pages;
     if (source.kind != domain::SourceKind::pdf) {
       const auto text = read_source_text(retained_path);
+      if (!domain::is_valid_source_text(text)) {
+        throw ExtractionError(ExtractionErrorKind::invalid_state,
+                              "source text must be UTF-8 without embedded NULs");
+      }
+      if (source_import::sha256_text(text) != source.sha256) {
+        throw ExtractionError(ExtractionErrorKind::invalid_state,
+                              "source bytes changed while reading text");
+      }
       const auto existing_id = existing_ids.find(1U);
       pages.push_back({
           .page_id = existing_id == existing_ids.end()
@@ -562,14 +659,22 @@ ExtractionResult Extractor::extract(
       const auto staging_path =
           project_root_ / config_.paths.cache / "extraction-staging" /
           run_id.value;
+      if (!domain::is_within(project_root_ / config_.paths.cache, staging_path)) {
+        throw ExtractionError(ExtractionErrorKind::invalid_project, "unsafe extraction staging path");
+      }
       StagingDirectory staging(staging_path);
+      // Adapters consume a verified private snapshot, so edits of the retained
+      // source during rendering cannot mix bytes from different revisions.
+      const auto adapter_source = staging.path() / "source.pdf";
+      std::filesystem::copy_file(retained_path, adapter_source);
+      source_import::verify_retained_file(staging.path(), adapter_source, source.sha256);
       const auto rendered_pages =
-          pdf_adapter_->render_pages(retained_path, staging.path());
+          pdf_adapter_->render_pages(adapter_source, staging.path());
+      if (rendered_pages.empty()) {
+        throw ExtractionError(ExtractionErrorKind::adapter_error, "renderer returned no pages");
+      }
       pages.reserve(rendered_pages.size());
-      const auto image_directory =
-          config_.paths.cache / "pages" / source.version_id.value;
-      std::filesystem::create_directories(
-          project_root_ / image_directory);
+      const auto& image_directory = output_directory;
 
       for (const auto& rendered : rendered_pages) {
         const auto existing_id =
@@ -585,18 +690,28 @@ ExtractionResult Extractor::extract(
                 ("page-" + padded_page_number(rendered.page_number) + ".png"),
             .text_status = domain::TextStatus::failed};
 
+        if (rendered.page_number != pages.size() + 1U ||
+            !domain::is_within(staging.path(), rendered.image_path) ||
+            !std::filesystem::is_regular_file(rendered.image_path)) {
+          throw ExtractionError(ExtractionErrorKind::adapter_error,
+                                "renderer returned invalid page order or image path");
+        }
         const auto final_image = project_root_ / *page.image_path;
         std::filesystem::copy_file(
             rendered.image_path, final_image,
-            std::filesystem::copy_options::overwrite_existing);
+            std::filesystem::copy_options::none);
 
         std::optional<std::string> native_text;
         try {
           native_text = pdf_adapter_->extract_native_text(
-              retained_path, rendered.page_number, staging.path());
+              adapter_source, rendered.page_number, staging.path());
         } catch (const AdapterError&) {
           // Native extraction is opportunistic. A rendered page can still be
           // recovered by OCR, so an adapter error here is page-local.
+        }
+        if (native_text && !domain::is_valid_source_text(*native_text)) {
+          throw ExtractionError(ExtractionErrorKind::adapter_error,
+                                "native extraction must be UTF-8 without embedded NULs");
         }
         if (native_text && has_usable_native_text(*native_text)) {
           page.text = *native_text;
@@ -604,6 +719,10 @@ ExtractionResult Extractor::extract(
         } else {
           try {
             const auto ocr = ocr_provider_->recognize(rendered.image_path);
+            if (!domain::is_valid_source_text(ocr.text)) {
+              throw ExtractionError(ExtractionErrorKind::adapter_error,
+                                    "OCR text must be UTF-8 without embedded NULs");
+            }
             if (ocr.succeeded && has_visible_text(ocr.text)) {
               page.text = ocr.text;
               page.text_status = domain::TextStatus::ocr_unreviewed;
@@ -615,11 +734,15 @@ ExtractionResult Extractor::extract(
         }
         pages.push_back(std::move(page));
       }
+      source_import::verify_retained_file(staging.path(), adapter_source, source.sha256);
     }
 
     const auto failed_pages = count_failed(pages);
-    persist_result(database, run_id, source.version_id, !existing.empty(),
-                   pages, failed_pages);
+    source_import::verify_retained_file(project_root_ / config_.paths.sources,
+                                      retained_path, source.sha256);
+    persist_result(database, run_id, source.version_id, expected_snapshot,
+                   project_root_, pages, failed_pages);
+    output.release();
     return {
         .source_id = source.source_id,
         .source_version_id = source.version_id,

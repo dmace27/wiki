@@ -1,5 +1,8 @@
 #include "kc/compiler/compiler.hpp"
 
+#include "kc/import/integrity.hpp"
+#include "kc/domain/path.hpp"
+
 #include "kc/domain/id.hpp"
 #include "kc/domain/concept.hpp"
 #include "kc/domain/json.hpp"
@@ -93,7 +96,8 @@ class Statement {
     const auto* value = sqlite3_column_text(statement_, column);
     return value == nullptr
                ? std::string{}
-               : std::string(reinterpret_cast<const char*>(value));
+               : std::string(reinterpret_cast<const char*>(value),
+                             static_cast<std::size_t>(sqlite3_column_bytes(statement_, column)));
   }
 
   [[nodiscard]] std::int64_t integer(const int column) const {
@@ -139,12 +143,25 @@ class Transaction {
   bool committed_{false};
 };
 
+/// Persist and compare all generation inputs, including uncited context.
+/// Revision prevents an A -> B -> A edit from appearing unchanged.
+nlohmann::json evidence_snapshot(const Statement& row) {
+  return {{"page_id", row.text(0)}, {"version_id", row.text(1)},
+          {"page_number", row.integer(2)}, {"image_path", row.text(3)},
+          {"text", row.text(4)}, {"status", row.text(5)},
+          {"source_id", row.text(6)}, {"source_name", row.text(7)},
+          {"revision", row.integer(8)}, {"text_sha256", row.text(9)},
+          {"image_sha256", row.text(10)}, {"stored_path", row.text(11)},
+          {"source_sha256", row.text(12)}};
+}
+
 struct CandidatePage {
   domain::ExtractedPage page;
   std::string source_id;
   std::string source_name;
   std::string normalized_source_name;
   std::size_t relevance_score{0};
+  nlohmann::json evidence;
 };
 
 std::string utc_now() {
@@ -162,6 +179,9 @@ std::string utc_now() {
 }
 
 domain::ProjectConfig read_config(const std::filesystem::path& root) {
+  if (!domain::is_within(root, root / "kc.json")) {
+    throw CompilerError(CompilerErrorKind::invalid_project, "configuration escapes project root");
+  }
   std::ifstream input(root / "kc.json");
   if (!input) {
     throw CompilerError(CompilerErrorKind::invalid_project,
@@ -178,6 +198,11 @@ domain::ProjectConfig read_config(const std::filesystem::path& root) {
                               : parsed.issues.front().message;
       throw CompilerError(CompilerErrorKind::invalid_project,
                           "invalid project configuration: " + detail);
+    }
+    try {
+      domain::validate_project_paths(root, *parsed.value);
+    } catch (const std::invalid_argument& error) {
+      throw CompilerError(CompilerErrorKind::invalid_project, error.what());
     }
     return *parsed.value;
   } catch (const nlohmann::json::exception&) {
@@ -411,8 +436,10 @@ class Compiler::Impl {
   }
 
   [[nodiscard]] std::vector<domain::ExtractedPage> select_evidence(
-      const CompileOptions& options) const {
+      const CompileOptions& options,
+      std::unordered_map<std::string, nlohmann::json>* snapshots = nullptr) const {
     validate_options(options);
+    static_cast<void>(read_config(project_root_));
 
     try {
       storage::Database database(state_path());
@@ -421,7 +448,8 @@ class Compiler::Impl {
       Statement statement(
           database.native_handle(),
           "SELECT p.page_id, p.source_version_id, p.page_number, "
-          "p.image_path, p.text, p.text_status, s.source_id, s.display_name "
+          "p.image_path, p.text, p.text_status, s.source_id, s.display_name, "
+          "p.evidence_revision, p.text_sha256, p.image_sha256, v.stored_path, v.sha256 "
           "FROM source_pages p "
           "JOIN source_versions v "
           "ON v.source_version_id = p.source_version_id "
@@ -459,8 +487,9 @@ class Compiler::Impl {
             .source_id = source_id,
             .source_name = statement.text(7)};
         if (!statement.is_null(3)) {
-          candidate.page.image_path = statement.text(3);
+          candidate.page.image_path = domain::path_from_utf8(statement.text(3));
         }
+        candidate.evidence = evidence_snapshot(statement);
         candidate.normalized_source_name =
             normalize_match_text(candidate.source_name);
         candidate.relevance_score =
@@ -504,6 +533,26 @@ class Compiler::Impl {
       std::vector<domain::ExtractedPage> pages;
       pages.reserve(candidates.size());
       for (auto& candidate : candidates) {
+        try {
+          if (!domain::is_valid_source_text(candidate.page.text) ||
+              source_import::sha256_text(candidate.page.text) !=
+                  candidate.evidence["text_sha256"].get<std::string>()) {
+            throw std::invalid_argument("selected page has invalid encoding or text SHA-256");
+          }
+          source_import::verify_retained_file(project_root_ / config_.paths.sources,
+              project_root_ / domain::path_from_utf8(candidate.evidence["stored_path"].get<std::string>()),
+              candidate.evidence["source_sha256"].get<std::string>());
+          if (candidate.page.image_path) {
+            source_import::verify_retained_file(project_root_ / config_.paths.cache,
+                project_root_ / *candidate.page.image_path,
+                candidate.evidence["image_sha256"].get<std::string>());
+          }
+        } catch (const std::exception& error) {
+          throw CompilerError(CompilerErrorKind::validation_failed, error.what());
+        }
+        if (snapshots) {
+          snapshots->emplace(candidate.page.page_id.value, candidate.evidence);
+        }
         pages.push_back(std::move(candidate.page));
       }
       return pages;
@@ -519,7 +568,8 @@ class Compiler::Impl {
     const auto target = find_article_target(options.concept_title);
     auto canonical_options = options;
     canonical_options.concept_title = target.title;
-    auto pages = select_evidence(canonical_options);
+    std::unordered_map<std::string, nlohmann::json> snapshots;
+    auto pages = select_evidence(canonical_options, &snapshots);
     if (pages.empty()) {
       throw CompilerError(
           CompilerErrorKind::no_evidence,
@@ -570,7 +620,7 @@ class Compiler::Impl {
 
     const auto proposal_id = domain::generate_proposal_id();
     persist_proposal(proposal_id, model_result.run_id, proposal,
-                     target.article_id);
+                     target.article_id, snapshots);
     return {
         .proposal_id = proposal_id,
         .model_run_id = model_result.run_id,
@@ -581,6 +631,11 @@ class Compiler::Impl {
 
  private:
   [[nodiscard]] std::filesystem::path state_path() const {
+    try {
+      domain::validate_project_paths(project_root_, config_);
+    } catch (const std::invalid_argument& error) {
+      throw CompilerError(CompilerErrorKind::invalid_project, error.what());
+    }
     return project_root_ / config_.paths.state;
   }
 
@@ -707,10 +762,40 @@ class Compiler::Impl {
       const domain::ProposalId& proposal_id,
       const domain::RunId& model_run_id,
       const domain::ArticleProposal& proposal,
-      const std::optional<domain::ArticleId>& article_id) const {
+      const std::optional<domain::ArticleId>& article_id,
+      const std::unordered_map<std::string, nlohmann::json>& snapshots) const {
+    static_cast<void>(read_config(project_root_));
     try {
       storage::Database database(state_path());
       Transaction transaction(database);
+
+      // Recheck every selected page under the publication write lock. A stale
+      // generation cannot supersede prior proposals or publish citations.
+      for (const auto& [page_id, expected] : snapshots) {
+        Statement page(database.native_handle(),
+            "SELECT p.page_id, p.source_version_id, p.page_number, p.image_path, "
+            "p.text, p.text_status, s.source_id, s.display_name, p.evidence_revision, "
+            "p.text_sha256, p.image_sha256, v.stored_path, v.sha256 "
+            "FROM source_pages p JOIN source_versions v ON v.source_version_id = p.source_version_id "
+            "JOIN sources s ON s.source_id = v.source_id WHERE p.page_id = ? "
+            "AND s.archived_at IS NULL AND v.rowid = "
+            "(SELECT MAX(v2.rowid) FROM source_versions v2 WHERE v2.source_id = s.source_id)");
+        page.bind_text(1, page_id);
+        if (page.step() != SQLITE_ROW || evidence_snapshot(page) != expected) {
+          throw CompilerError(CompilerErrorKind::validation_failed,
+                              "selected evidence changed during generation; review and compile again");
+        }
+        try {
+          source_import::verify_retained_file(project_root_ / config_.paths.sources,
+              project_root_ / domain::path_from_utf8(page.text(11)), page.text(12));
+          if (!page.is_null(3)) {
+            source_import::verify_retained_file(project_root_ / config_.paths.cache,
+                project_root_ / domain::path_from_utf8(page.text(3)), page.text(10));
+          }
+        } catch (const std::exception& error) {
+          throw CompilerError(CompilerErrorKind::validation_failed, error.what());
+        }
+      }
 
       // Recheck after generation under the write lock: another compiler or
       // apply may have claimed the identity while the model was running.
@@ -760,6 +845,23 @@ class Compiler::Impl {
       insert.bind_text(5, payload.dump());
       insert.bind_text(6, utc_now());
       static_cast<void>(insert.step());
+
+      for (const auto& [page_id, evidence] : snapshots) {
+        Statement insert_evidence(database.native_handle(),
+            "INSERT INTO proposal_evidence(proposal_id, page_id, evidence_revision, "
+            "text_sha256, image_sha256, source_sha256) VALUES (?, ?, ?, ?, ?, ?)");
+        insert_evidence.bind_text(1, proposal_id.value);
+        insert_evidence.bind_text(2, page_id);
+        insert_evidence.bind_integer(3, evidence["revision"].get<std::int64_t>());
+        insert_evidence.bind_text(4, evidence["text_sha256"].get<std::string>());
+        if (evidence["image_sha256"].get<std::string>().empty()) {
+          insert_evidence.bind_null(5);
+        } else {
+          insert_evidence.bind_text(5, evidence["image_sha256"].get<std::string>());
+        }
+        insert_evidence.bind_text(6, evidence["source_sha256"].get<std::string>());
+        static_cast<void>(insert_evidence.step());
+      }
 
       // Block indexes are contiguous per section key, even if a model emits
       // more than one section with the same key. Top-level related concepts

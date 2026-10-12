@@ -101,7 +101,8 @@ std::string Database::scalar_text(const std::string_view sql) const {
     throw StorageError(error_message(connection_, "SQLite query returned no row"));
   }
   const auto* value = sqlite3_column_text(statement.get(), 0);
-  return value == nullptr ? std::string{} : std::string(reinterpret_cast<const char*>(value));
+  return value == nullptr ? std::string{} : std::string(reinterpret_cast<const char*>(value),
+      static_cast<std::size_t>(sqlite3_column_bytes(statement.get(), 0)));
 }
 
 }  // namespace kc::storage

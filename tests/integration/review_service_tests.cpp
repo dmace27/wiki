@@ -73,6 +73,7 @@ ReviewFixture seed_review_fixture(const std::filesystem::path& root,
   write_file(root / image_path, "review image fixture");
   database.execute("UPDATE source_pages SET image_path = " +
                    sql_string(image_path.generic_string()) +
+                   " , image_sha256 = " + sql_string(kc::source_import::sha256_text("review image fixture")) +
                    " WHERE page_id = " + sql_string(page.page_id.value));
   page.image_path = image_path;
 
@@ -150,6 +151,7 @@ TEST_CASE("extraction review keeps image text and status together and corrects s
   write_file(root / image_path, "review image fixture");
   database.execute("UPDATE source_pages SET image_path = " +
                    sql_string(image_path.generic_string()) +
+                   " , image_sha256 = " + sql_string(kc::source_import::sha256_text("review image fixture")) +
                    " WHERE page_id = " +
                    sql_string(extracted.pages.front().page_id.value));
 

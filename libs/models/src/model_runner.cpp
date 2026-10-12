@@ -1,3 +1,4 @@
+#include "kc/domain/path.hpp"
 #include "kc/models/model_runner.hpp"
 
 #include "kc/domain/id.hpp"
@@ -79,7 +80,21 @@ std::string utc_now() {
   return output.str();
 }
 
+/// Resolve containment again for services reused after directories change.
+std::filesystem::path checked_state_path(const std::filesystem::path& root,
+                                         const domain::ProjectConfig& config) {
+  try {
+    domain::validate_project_paths(root, config);
+  } catch (const std::invalid_argument& error) {
+    throw ModelError(ModelErrorKind::invalid_project, error.what());
+  }
+  return root / config.paths.state;
+}
+
 domain::ProjectConfig read_config(const std::filesystem::path& root) {
+  if (!domain::is_within(root, root / "kc.json")) {
+    throw ModelError(ModelErrorKind::invalid_project, "configuration escapes project root");
+  }
   const auto path = root / "kc.json";
   std::ifstream input(path);
   if (!input) {
@@ -94,6 +109,11 @@ domain::ProjectConfig read_config(const std::filesystem::path& root) {
     if (!parsed) {
       throw ModelError(ModelErrorKind::invalid_project,
                        "project configuration is invalid");
+    }
+    try {
+      domain::validate_project_paths(root, *parsed.value);
+    } catch (const std::invalid_argument& error) {
+      throw ModelError(ModelErrorKind::invalid_project, error.what());
     }
     return *parsed.value;
   } catch (const nlohmann::json::exception&) {
@@ -209,7 +229,7 @@ ModelRunner::ModelRunner(std::filesystem::path project_root,
           std::filesystem::absolute(std::move(project_root)).lexically_normal()),
       config_(read_config(project_root_)),
       language_model_(configured_ollama_model(config_, std::move(http_client))) {
-  if (!std::filesystem::is_regular_file(project_root_ / config_.paths.state)) {
+  if (!std::filesystem::is_regular_file(checked_state_path(project_root_, config_))) {
     throw ModelError(ModelErrorKind::invalid_project,
                      "project state database does not exist; run 'kc init' first");
   }
@@ -221,7 +241,7 @@ ModelRunner::ModelRunner(std::filesystem::path project_root,
           std::filesystem::absolute(std::move(project_root)).lexically_normal()),
       config_(read_config(project_root_)),
       language_model_(std::move(language_model)) {
-  if (!std::filesystem::is_regular_file(project_root_ / config_.paths.state)) {
+  if (!std::filesystem::is_regular_file(checked_state_path(project_root_, config_))) {
     throw ModelError(ModelErrorKind::invalid_project,
                      "project state database does not exist; run 'kc init' first");
   }
@@ -245,7 +265,7 @@ ModelRunResult ModelRunner::generate_concept(
   const auto hash = request_hash(*language_model_, prompt);
   const auto run_id = domain::generate_run_id();
   const auto started_at = utc_now();
-  const auto state_path = project_root_ / config_.paths.state;
+  const auto state_path = checked_state_path(project_root_, config_);
 
   LanguageModelResponse response;
   try {

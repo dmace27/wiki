@@ -1,4 +1,7 @@
 #include "kc/domain/types.hpp"
+
+#include "kc/domain/path.hpp"
+#include "kc/domain/text.hpp"
 #include "kc/domain/concept.hpp"
 #include "kc/domain/markdown.hpp"
 #include "kc/domain/id.hpp"
@@ -15,7 +18,8 @@ namespace {
 
 /// Return true only for non-empty relative paths that cannot climb to a parent.
 bool is_project_relative(const std::filesystem::path& path) {
-  if (path.empty() || path.is_absolute()) {
+  if (path.empty() || path.is_absolute() ||
+      !is_valid_source_text(path_to_utf8(path))) {
     return false;
   }
   return std::ranges::none_of(path, [](const auto& part) { return part == ".."; });
@@ -69,6 +73,7 @@ ValidationResult validate(const ExtractedPage& page) {
   if (page.image_path) {
     require(is_project_relative(*page.image_path), result, "/image_path", "must be project-relative");
   }
+  require(is_valid_source_text(page.text), result, "/text", "must be UTF-8 without embedded NULs");
   require(!page.language.empty(), result, "/language", "must not be empty");
   return result;
 }

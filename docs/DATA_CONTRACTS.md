@@ -6,7 +6,8 @@
   `prp_`, and `run_`.
 - Timestamps are UTC RFC 3339 strings.
 - Content hashes use lowercase SHA-256 hex.
-- Text is UTF-8.
+- Text is valid UTF-8 without embedded NULs. Source text and line endings are
+  preserved; citation offsets count UTF-8 bytes.
 - JSON uses `snake_case` keys and JSON Schema Draft 2020-12.
 - A source version is immutable. Citations use `page_id`, which belongs to a
   specific immutable source version.

@@ -5,6 +5,7 @@ find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
 add_executable(kc_tests
   integration/compiler_tests.cpp
   integration/end_to_end_tests.cpp
+  integration/extraction_integrity_tests.cpp
   integration/extractor_tests.cpp
   integration/model_runner_tests.cpp
   integration/source_importer_tests.cpp

@@ -166,13 +166,33 @@ was completed.
 
 **Evidence:** `libs/extraction/src/extractor.cpp`, `libs/import/src/source_importer.cpp`, `libs/storage/src/project_initializer.cpp`, and `libs/compiler/src/compiler.cpp::persist_proposal`. Vault writing already has stronger canonical containment and source-hash checks than earlier stages.
 
-- [ ] Use canonical containment checks consistently for state, source storage, cache, staging, and initialization. Lexically relative paths can still traverse symlinked directories outside the project. Reject unsupported overlapping configurations such as placing state or generated output inside immutable source storage.
-- [ ] Verify retained source hashes before extraction and cache reuse; extraction currently reads the retained file without comparing its recorded digest. Reject or diagnose missing/tampered source files and images early.
-- [ ] Capture selected page hashes/revisions and recheck them under the proposal-persistence transaction. A page can be corrected or force-extracted while model generation is running; current proposal persistence does not verify that its in-memory evidence is still current.
-- [ ] Serialize or stage concurrent extraction attempts. Page images are overwritten before the final citation check in `persist_result`; the database lock alone does not protect the image files throughout the operation.
-- [ ] Validate UTF-8 and reject embedded NULs in supported text inputs. SQLite text readers construct strings from null-terminated pointers, which can truncate embedded NUL content and make hashes/offsets disagree.
+- [x] Use canonical containment checks consistently for state, source storage, cache, staging, and initialization. Lexically relative paths can still traverse symlinked directories outside the project. Reject unsupported overlapping configurations such as placing state or generated output inside immutable source storage.
+- [x] Verify retained source hashes before extraction and cache reuse; extraction currently reads the retained file without comparing its recorded digest. Reject or diagnose missing/tampered source files and images early.
+- [x] Capture selected page hashes/revisions and recheck them under the proposal-persistence transaction. A page can be corrected or force-extracted while model generation is running; current proposal persistence does not verify that its in-memory evidence is still current.
+- [x] Serialize or stage concurrent extraction attempts. Page images are overwritten before the final citation check in `persist_result`; the database lock alone does not protect the image files throughout the operation.
+- [x] Validate UTF-8 and reject embedded NULs in supported text inputs. SQLite text readers construct strings from null-terminated pointers, which can truncate embedded NUL content and make hashes/offsets disagree.
 
 **Tests / done when:** use isolated fixtures for symlink escapes, retained-file tampering, invalid encoding, missing images, and two-process extraction/correction/compile races. A proposal must always refer to the exact reviewed evidence used to generate it.
+
+**Completed October 12, 2026:** Shared canonical containment checks now
+protect initialization, state, source storage, cache, staging, and vault
+ownership, including dangling symlinks and unsupported overlapping roots.
+Extraction verifies retained source bytes before extraction/cache reuse; PDF
+adapters consume a verified private snapshot. Cached text and images must match
+recorded digests. Migration 004 adds monotonic page revisions, image hashes,
+and captured proposal evidence. Publication rechecks every selected page and
+retained file under its transaction; uncited generation context is also frozen.
+Concurrent extraction attempts own separate image directories and reject stale
+publication without replacing earlier images or corrected text. All supported
+text boundaries reject malformed UTF-8/NULs; SQLite readers preserve byte
+lengths. [Extraction integrity rules and verification](docs/EXTRACTION_INTEGRITY.md)
+document upgrade/legacy-image behavior and the tested concurrency boundary.
+Fourteen isolated integrity tests passed **172 assertions**, including actual
+two-process extraction/correction/compile races. Development and ASan/UBSan
+(warnings-as-errors) suites each passed **119/119 tests**; the release build,
+retained-copy/cache-reuse CLI regression, and release CLI migration/Unicode/
+tampered-source/NUL-input smoke checks passed. Verification remains macOS
+arm64; no other finish task was completed.
 
 ### 7. Preserve accumulated knowledge during concept updates — P0
 

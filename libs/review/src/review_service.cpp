@@ -1,5 +1,9 @@
 #include "kc/review/review_service.hpp"
 
+#include "kc/import/integrity.hpp"
+#include "kc/domain/text.hpp"
+#include "kc/domain/path.hpp"
+
 #include "kc/domain/json.hpp"
 #include "kc/import/sha256.hpp"
 #include "kc/storage/database.hpp"
@@ -80,7 +84,8 @@ class Statement {
     const auto* value = sqlite3_column_text(statement_, column);
     return value == nullptr
                ? std::string{}
-               : std::string(reinterpret_cast<const char*>(value));
+               : std::string(reinterpret_cast<const char*>(value),
+                             static_cast<std::size_t>(sqlite3_column_bytes(statement_, column)));
   }
 
   [[nodiscard]] std::int64_t integer(const int column) const {
@@ -131,6 +136,8 @@ struct SourceRecord {
   domain::SourceVersionId version_id;
   std::string display_name;
   domain::SourceKind source_kind{domain::SourceKind::text};
+  std::filesystem::path stored_path;
+  std::string sha256;
 };
 
 std::string utc_now() {
@@ -156,7 +163,21 @@ bool is_safe_relative(const std::filesystem::path& path) {
   });
 }
 
+/// Resolve containment again for services reused after directories change.
+std::filesystem::path checked_state_path(const std::filesystem::path& root,
+                                         const domain::ProjectConfig& config) {
+  try {
+    domain::validate_project_paths(root, config);
+  } catch (const std::invalid_argument& error) {
+    throw ReviewError(ReviewErrorKind::invalid_project, error.what());
+  }
+  return root / config.paths.state;
+}
+
 domain::ProjectConfig read_config(const std::filesystem::path& root) {
+  if (!domain::is_within(root, root / "kc.json")) {
+    throw ReviewError(ReviewErrorKind::invalid_project, "configuration escapes project root");
+  }
   std::ifstream input(root / "kc.json");
   if (!input) {
     throw ReviewError(ReviewErrorKind::invalid_project,
@@ -173,6 +194,11 @@ domain::ProjectConfig read_config(const std::filesystem::path& root) {
                               : parsed.issues.front().message;
       throw ReviewError(ReviewErrorKind::invalid_project,
                         "invalid project configuration: " + detail);
+    }
+    try {
+      domain::validate_project_paths(root, *parsed.value);
+    } catch (const std::invalid_argument& error) {
+      throw ReviewError(ReviewErrorKind::invalid_project, error.what());
     }
     return *parsed.value;
   } catch (const nlohmann::json::exception&) {
@@ -248,7 +274,7 @@ SourceRecord find_latest_source(sqlite3* connection,
   Statement statement(
       connection,
       "SELECT s.source_id, v.source_version_id, s.display_name, "
-      "s.source_kind FROM sources s JOIN source_versions v "
+      "s.source_kind, v.stored_path, v.sha256 FROM sources s JOIN source_versions v "
       "ON v.source_id = s.source_id WHERE s.source_id = ? "
       "AND s.archived_at IS NULL ORDER BY v.rowid DESC LIMIT 1");
   statement.bind_text(1, source_id.value);
@@ -260,7 +286,9 @@ SourceRecord find_latest_source(sqlite3* connection,
   return {.source_id = {statement.text(0)},
           .version_id = {statement.text(1)},
           .display_name = statement.text(2),
-          .source_kind = parse_source_kind(statement.text(3))};
+          .source_kind = parse_source_kind(statement.text(3)),
+          .stored_path = domain::path_from_utf8(statement.text(4)),
+          .sha256 = statement.text(5)};
 }
 
 domain::ArticleProposal parse_payload(const std::string& payload) {
@@ -337,7 +365,7 @@ ReviewService::ReviewService(std::filesystem::path project_root)
     : project_root_(std::filesystem::absolute(std::move(project_root))
                         .lexically_normal()),
       config_(read_config(project_root_)) {
-  if (!std::filesystem::is_regular_file(project_root_ / config_.paths.state)) {
+  if (!std::filesystem::is_regular_file(checked_state_path(project_root_, config_))) {
     throw ReviewError(
         ReviewErrorKind::invalid_project,
         "project state database does not exist; run 'kc init' first");
@@ -346,12 +374,19 @@ ReviewService::ReviewService(std::filesystem::path project_root)
 
 ExtractionReview ReviewService::review_extraction(
     const domain::SourceId& source_id) const {
+  static_cast<void>(read_config(project_root_));
   try {
-    storage::Database database(project_root_ / config_.paths.state);
+    storage::Database database(checked_state_path(project_root_, config_));
     const auto source = find_latest_source(database.native_handle(), source_id);
+    try {
+      source_import::verify_retained_file(project_root_ / config_.paths.sources,
+          project_root_ / source.stored_path, source.sha256);
+    } catch (const std::exception& error) {
+      throw ReviewError(ReviewErrorKind::invalid_state, error.what());
+    }
     Statement statement(
         database.native_handle(),
-        "SELECT page_id, page_number, image_path, text, text_status "
+        "SELECT page_id, page_number, image_path, text, text_status, text_sha256, image_sha256 "
         "FROM source_pages WHERE source_version_id = ? ORDER BY page_number");
     statement.bind_text(1, source.version_id.value);
 
@@ -366,12 +401,24 @@ ExtractionReview ReviewService::review_extraction(
           .text = statement.text(3),
           .text_status = parse_text_status(statement.text(4))};
       if (!statement.is_null(2)) {
-        page.image_path = statement.text(2);
+        page.image_path = domain::path_from_utf8(statement.text(2));
         if (!is_safe_relative(*page.image_path)) {
           throw ReviewError(
               ReviewErrorKind::state_error,
               "project database contains an unsafe rendered page path");
         }
+      }
+      try {
+        if (!domain::is_valid_source_text(page.text) ||
+            source_import::sha256_text(page.text) != statement.text(5)) {
+          throw std::invalid_argument("review page has invalid encoding or text SHA-256");
+        }
+        if (page.image_path) {
+          source_import::verify_retained_file(project_root_ / config_.paths.cache,
+              project_root_ / *page.image_path, statement.text(6));
+        }
+      } catch (const std::exception& error) {
+        throw ReviewError(ReviewErrorKind::invalid_state, error.what());
       }
       result.pages.push_back(std::move(page));
     }
@@ -397,15 +444,22 @@ PageCorrectionResult ReviewService::correct_page_text(
     throw ReviewError(ReviewErrorKind::invalid_input,
                       "page number must be at least 1");
   }
-  if (!has_visible_text(corrected_text)) {
+  if (!domain::is_valid_source_text(corrected_text) || !has_visible_text(corrected_text)) {
     throw ReviewError(ReviewErrorKind::invalid_input,
-                      "corrected page text must contain visible text");
+                      "corrected page text must be visible UTF-8 without embedded NULs");
   }
 
+  static_cast<void>(read_config(project_root_));
   try {
-    storage::Database database(project_root_ / config_.paths.state);
+    storage::Database database(checked_state_path(project_root_, config_));
     Transaction transaction(database);
     const auto source = find_latest_source(database.native_handle(), source_id);
+    try {
+      source_import::verify_retained_file(project_root_ / config_.paths.sources,
+          project_root_ / source.stored_path, source.sha256);
+    } catch (const std::exception& error) {
+      throw ReviewError(ReviewErrorKind::invalid_state, error.what());
+    }
     Statement page(
         database.native_handle(),
         "SELECT page_id FROM source_pages WHERE source_version_id = ? "
@@ -423,7 +477,8 @@ PageCorrectionResult ReviewService::correct_page_text(
     // exact text. A correction must therefore happen before compilation.
     Statement references(
         database.native_handle(),
-        "SELECT COUNT(*) FROM proposal_citations WHERE page_id = ?");
+        "SELECT (SELECT COUNT(*) FROM proposal_citations WHERE page_id = ?1) + "
+        "(SELECT COUNT(*) FROM proposal_evidence WHERE page_id = ?1)");
     references.bind_text(1, page_id.value);
     static_cast<void>(references.step());
     if (references.integer(0) != 0) {
@@ -436,7 +491,7 @@ PageCorrectionResult ReviewService::correct_page_text(
     Statement update(
         database.native_handle(),
         "UPDATE source_pages SET text = ?, text_status = 'reviewed', "
-        "text_sha256 = ? WHERE page_id = ? AND source_version_id = ?");
+        "evidence_revision = evidence_revision + 1, text_sha256 = ? WHERE page_id = ? AND source_version_id = ?");
     update.bind_text(1, corrected_text);
     update.bind_text(2, hash);
     update.bind_text(3, page_id.value);
@@ -463,8 +518,9 @@ PageCorrectionResult ReviewService::correct_page_text(
 
 std::vector<ProposalSummary> ReviewService::list_proposals(
     const std::optional<domain::ProposalStatus> status) const {
+  static_cast<void>(read_config(project_root_));
   try {
-    storage::Database database(project_root_ / config_.paths.state);
+    storage::Database database(checked_state_path(project_root_, config_));
     Statement statement(
         database.native_handle(),
         status ? "SELECT proposal_id, article_id, operation, status, "
@@ -495,8 +551,9 @@ std::vector<ProposalSummary> ReviewService::list_proposals(
 
 ProposalReview ReviewService::review_proposal(
     const domain::ProposalId& proposal_id) const {
+  static_cast<void>(read_config(project_root_));
   try {
-    storage::Database database(project_root_ / config_.paths.state);
+    storage::Database database(checked_state_path(project_root_, config_));
     Statement proposal_row(
         database.native_handle(),
         "SELECT proposal_id, article_id, operation, status, created_at, "
@@ -526,7 +583,7 @@ ProposalReview ReviewService::review_proposal(
         "SELECT pc.section_key, pc.block_index, pc.page_id, pc.start_char, "
         "pc.end_char, pc.quote, s.source_id, s.display_name, s.source_kind, "
         "v.source_version_id, p.page_number, p.image_path, p.text, "
-        "p.text_status FROM proposal_citations pc "
+        "p.text_status, p.text_sha256, p.image_sha256, v.stored_path, v.sha256 FROM proposal_citations pc "
         "JOIN source_pages p ON p.page_id = pc.page_id "
         "JOIN source_versions v ON v.source_version_id = p.source_version_id "
         "JOIN sources s ON s.source_id = v.source_id "
@@ -551,8 +608,22 @@ ProposalReview ReviewService::review_proposal(
               static_cast<std::uint32_t>(citations.integer(10)),
           .extracted_text = citations.text(12),
           .text_status = parse_text_status(citations.text(13))};
+      try {
+        if (!domain::is_valid_source_text(evidence.extracted_text) ||
+            source_import::sha256_text(evidence.extracted_text) != citations.text(14)) {
+          throw std::invalid_argument("citation page text failed integrity validation");
+        }
+        source_import::verify_retained_file(project_root_ / config_.paths.sources,
+            project_root_ / domain::path_from_utf8(citations.text(16)), citations.text(17));
+        if (!citations.is_null(11)) {
+          source_import::verify_retained_file(project_root_ / config_.paths.cache,
+              project_root_ / domain::path_from_utf8(citations.text(11)), citations.text(15));
+        }
+      } catch (const std::exception& error) {
+        throw ReviewError(ReviewErrorKind::invalid_state, error.what());
+      }
       if (!citations.is_null(11)) {
-        evidence.image_path = citations.text(11);
+        evidence.image_path = domain::path_from_utf8(citations.text(11));
         if (!is_safe_relative(*evidence.image_path)) {
           throw ReviewError(
               ReviewErrorKind::state_error,
@@ -600,8 +671,9 @@ void ReviewService::reject_proposal(
                       "rejection reason must contain visible text");
   }
 
+  static_cast<void>(read_config(project_root_));
   try {
-    storage::Database database(project_root_ / config_.paths.state);
+    storage::Database database(checked_state_path(project_root_, config_));
     Statement exists(database.native_handle(),
                      "SELECT status FROM proposals WHERE proposal_id = ?");
     exists.bind_text(1, proposal_id.value);

@@ -102,7 +102,8 @@ public:
     const auto *value = sqlite3_column_text(statement_, column);
     return value == nullptr
                ? std::string{}
-               : std::string(reinterpret_cast<const char *>(value));
+               : std::string(reinterpret_cast<const char *>(value),
+                             static_cast<std::size_t>(sqlite3_column_bytes(statement_, column)));
   }
 
   [[nodiscard]] std::int64_t integer(const int column) const {
@@ -205,27 +206,23 @@ bool is_safe_relative(const std::filesystem::path &path) {
       path, [](const auto &component) { return component == ".."; });
 }
 
-/// Verify a path remains inside a trusted root after resolving symlinked
-/// parents. This prevents a replaced vault/cache directory from redirecting a
-/// write outside the initialized project.
-bool is_within(const std::filesystem::path &trusted_root,
-               const std::filesystem::path &candidate) {
-  std::error_code error;
-  const auto root = std::filesystem::weakly_canonical(trusted_root, error);
-  if (error) {
-    return false;
+using domain::is_within;
+
+/// Resolve containment again for services reused after directories change.
+std::filesystem::path checked_state_path(const std::filesystem::path& root,
+                                         const domain::ProjectConfig& config) {
+  try {
+    domain::validate_project_paths(root, config);
+  } catch (const std::invalid_argument& error) {
+    throw VaultError(VaultErrorKind::invalid_project, error.what());
   }
-  const auto resolved = std::filesystem::weakly_canonical(candidate, error);
-  if (error) {
-    return false;
-  }
-  const auto relative = resolved.lexically_relative(root);
-  return !relative.empty() && !relative.is_absolute() &&
-         std::ranges::none_of(
-             relative, [](const auto &component) { return component == ".."; });
+  return root / config.paths.state;
 }
 
 domain::ProjectConfig read_config(const std::filesystem::path &root) {
+  if (!domain::is_within(root, root / "kc.json")) {
+    throw VaultError(VaultErrorKind::invalid_project, "configuration escapes project root");
+  }
   std::ifstream input(root / "kc.json");
   if (!input) {
     throw VaultError(VaultErrorKind::invalid_project,
@@ -241,6 +238,11 @@ domain::ProjectConfig read_config(const std::filesystem::path &root) {
                                                 : parsed.issues.front().message;
       throw VaultError(VaultErrorKind::invalid_project,
                        "invalid project configuration: " + detail);
+    }
+    try {
+      domain::validate_project_paths(root, *parsed.value);
+    } catch (const std::invalid_argument& error) {
+      throw VaultError(VaultErrorKind::invalid_project, error.what());
     }
     return *parsed.value;
   } catch (const nlohmann::json::exception &) {
@@ -1110,7 +1112,7 @@ VaultWriter::VaultWriter(std::filesystem::path project_root)
     : project_root_(std::filesystem::absolute(std::move(project_root))
                         .lexically_normal()),
       config_(read_config(project_root_)) {
-  if (!std::filesystem::is_regular_file(project_root_ / config_.paths.state)) {
+  if (!std::filesystem::is_regular_file(checked_state_path(project_root_, config_))) {
     throw VaultError(
         VaultErrorKind::invalid_project,
         "project state database does not exist; run 'kc init' first");
@@ -1129,7 +1131,7 @@ VaultWriter::VaultWriter(std::filesystem::path project_root)
 
 void VaultWriter::approve(const domain::ProposalId &proposal_id) {
   try {
-    storage::Database database(project_root_ / config_.paths.state);
+    storage::Database database(checked_state_path(project_root_, config_));
     Transaction transaction(database);
     auto record = load_proposal(database.native_handle(), proposal_id);
     if (record.status != "pending") {
@@ -1159,7 +1161,7 @@ void VaultWriter::approve(const domain::ProposalId &proposal_id) {
 ApplyResult VaultWriter::apply(const domain::ProposalId &proposal_id,
                                const ApplyOptions &options) {
   try {
-    storage::Database database(project_root_ / config_.paths.state);
+    storage::Database database(checked_state_path(project_root_, config_));
     // Serialize approval-state validation, the filesystem replacement, and
     // durable state publication. A second process cannot race the same
     // approved proposal and later roll back over the first process's result.

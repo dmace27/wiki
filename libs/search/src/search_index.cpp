@@ -70,7 +70,8 @@ class Statement {
     const auto* value = sqlite3_column_text(statement_, column);
     return value == nullptr
                ? std::string{}
-               : std::string(reinterpret_cast<const char*>(value));
+               : std::string(reinterpret_cast<const char*>(value),
+                             static_cast<std::size_t>(sqlite3_column_bytes(statement_, column)));
   }
 
   [[nodiscard]] double real(const int column) const {
@@ -91,7 +92,21 @@ bool is_safe_relative(const std::filesystem::path& path) {
   });
 }
 
+/// Resolve containment again for services reused after directories change.
+std::filesystem::path checked_state_path(const std::filesystem::path& root,
+                                         const domain::ProjectConfig& config) {
+  try {
+    domain::validate_project_paths(root, config);
+  } catch (const std::invalid_argument& error) {
+    throw SearchError(SearchErrorKind::invalid_project, error.what());
+  }
+  return root / config.paths.state;
+}
+
 domain::ProjectConfig read_config(const std::filesystem::path& root) {
+  if (!domain::is_within(root, root / "kc.json")) {
+    throw SearchError(SearchErrorKind::invalid_project, "configuration escapes project root");
+  }
   std::ifstream input(root / "kc.json");
   if (!input) {
     throw SearchError(SearchErrorKind::invalid_project,
@@ -108,6 +123,11 @@ domain::ProjectConfig read_config(const std::filesystem::path& root) {
                               : parsed.issues.front().message;
       throw SearchError(SearchErrorKind::invalid_project,
                         "invalid project configuration: " + detail);
+    }
+    try {
+      domain::validate_project_paths(root, *parsed.value);
+    } catch (const std::invalid_argument& error) {
+      throw SearchError(SearchErrorKind::invalid_project, error.what());
     }
     return *parsed.value;
   } catch (const nlohmann::json::exception&) {
@@ -153,7 +173,7 @@ SearchIndex::SearchIndex(std::filesystem::path project_root)
     : project_root_(std::filesystem::absolute(std::move(project_root))
                         .lexically_normal()),
       config_(read_config(project_root_)) {
-  if (!std::filesystem::is_regular_file(project_root_ / config_.paths.state)) {
+  if (!std::filesystem::is_regular_file(checked_state_path(project_root_, config_))) {
     throw SearchError(
         SearchErrorKind::invalid_project,
         "project state database does not exist; run 'kc init' first");
@@ -178,7 +198,7 @@ std::vector<SearchResult> SearchIndex::search(
   }
 
   try {
-    storage::Database database(project_root_ / config_.paths.state);
+    storage::Database database(checked_state_path(project_root_, config_));
     Statement statement(
         database.native_handle(),
         "SELECT a.article_id, a.title, a.vault_path, "

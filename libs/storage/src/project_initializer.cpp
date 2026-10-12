@@ -1,5 +1,7 @@
 #include "kc/storage/project_initializer.hpp"
 
+#include "kc/domain/path.hpp"
+
 #include "kc/domain/id.hpp"
 #include "kc/domain/json.hpp"
 #include "kc/storage/database.hpp"
@@ -98,11 +100,19 @@ InitResult initialize_project(const InitOptions& options) {
   const auto root = std::filesystem::absolute(options.project_root).lexically_normal();
   std::filesystem::create_directories(root);
   const auto config_path = root / "kc.json";
+  if (!domain::is_within(root, config_path)) {
+    throw StorageError("configuration escapes project root");
+  }
   const auto created = !std::filesystem::exists(config_path);
   // An existing configuration is authoritative; a repeated `init --vault`
   // validates the project instead of silently changing its vault location.
   auto config = created ? new_config(options.vault_path) : read_config(config_path);
 
+  try {
+    domain::validate_project_paths(root, config);
+  } catch (const std::invalid_argument& error) {
+    throw StorageError(error.what());
+  }
   create_project_directories(root, config);
   if (created) {
     write_config(config_path, config);

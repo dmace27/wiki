@@ -18,9 +18,9 @@ TEST_CASE("initial migration creates the documented database and is idempotent")
   const auto first = migrations.apply_all();
   const auto second = migrations.apply_all();
 
-  REQUIRE(first.applied_versions == std::vector<int>{1, 2, 3});
+  REQUIRE(first.applied_versions == std::vector<int>{1, 2, 3, 4});
   CHECK(second.applied_versions.empty());
-  CHECK(database.scalar_integer("SELECT COUNT(*) FROM schema_migrations;") == 3);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM schema_migrations;") == 4);
   CHECK(database.scalar_integer(
             "SELECT COUNT(*) FROM pragma_table_info('proposals') "
             "WHERE name = 'review_reason';") == 1);
@@ -73,7 +73,7 @@ TEST_CASE("proposal review migration upgrades an existing version-one project") 
       "'2026-08-11T12:00:00Z')");
 
   kc::storage::MigrationRunner upgrade(database, KC_TEST_MIGRATIONS_DIR);
-  CHECK(upgrade.apply_all().applied_versions == std::vector<int>{2, 3});
+  CHECK(upgrade.apply_all().applied_versions == std::vector<int>{2, 3, 4});
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals") == 1);
   CHECK(database.scalar_integer(
             "SELECT COUNT(*) FROM pragma_table_info('proposals') "
@@ -109,7 +109,7 @@ TEST_CASE("source identity migration preserves historical evidence and latest or
       "INSERT INTO apply_runs VALUES ('apply_old','prp_old','art_old',NULL,'hash',NULL,'t');");
 
   kc::storage::MigrationRunner upgrade(database, KC_TEST_MIGRATIONS_DIR);
-  CHECK(upgrade.apply_all().applied_versions == std::vector<int>{3});
+  CHECK(upgrade.apply_all().applied_versions == std::vector<int>{3, 4});
   CHECK(upgrade.apply_all().applied_versions.empty());
   CHECK(database.scalar_integer("PRAGMA foreign_keys") == 1);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM pragma_foreign_key_check") == 0);
@@ -118,6 +118,9 @@ TEST_CASE("source identity migration preserves historical evidence and latest or
   CHECK(database.scalar_text("SELECT stored_path FROM source_versions WHERE source_version_id = 'sv_old'") == "sources/old.md");
   CHECK(database.scalar_text("SELECT payload_json FROM proposals") == "{\"immutable\":true}");
   CHECK(database.scalar_text("SELECT quote FROM proposal_citations") == "A");
+  CHECK(database.scalar_integer("SELECT evidence_revision FROM source_pages") == 0);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM source_pages WHERE image_sha256 IS NULL") == 1);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposal_evidence") == 0);
   CHECK(database.scalar_text("SELECT page_id FROM article_citations") == "pg_old");
   CHECK(database.scalar_text("SELECT source_version_id FROM extraction_runs") == "sv_old");
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 1);

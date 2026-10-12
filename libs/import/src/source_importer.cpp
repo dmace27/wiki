@@ -1,5 +1,8 @@
 #include "kc/import/source_importer.hpp"
 
+#include "kc/domain/text.hpp"
+#include "kc/domain/path.hpp"
+
 #include "kc/domain/id.hpp"
 #include "kc/domain/json.hpp"
 #include "kc/import/sha256.hpp"
@@ -75,7 +78,8 @@ class Statement {
   [[nodiscard]] std::string text(const int column) const {
     const auto* value = sqlite3_column_text(statement_, column);
     return value == nullptr ? std::string{}
-                            : std::string(reinterpret_cast<const char*>(value));
+                            : std::string(reinterpret_cast<const char*>(value),
+                             static_cast<std::size_t>(sqlite3_column_bytes(statement_, column)));
   }
 
   [[nodiscard]] std::int64_t integer(const int column) const {
@@ -154,7 +158,21 @@ bool is_safe_relative(const std::filesystem::path& path) {
   });
 }
 
+/// Resolve containment again for services reused after directories change.
+std::filesystem::path checked_state_path(const std::filesystem::path& root,
+                                         const domain::ProjectConfig& config) {
+  try {
+    domain::validate_project_paths(root, config);
+  } catch (const std::invalid_argument& error) {
+    throw ImportError(ImportErrorKind::invalid_project, error.what());
+  }
+  return root / config.paths.state;
+}
+
 domain::ProjectConfig read_config(const std::filesystem::path& root) {
+  if (!domain::is_within(root, root / "kc.json")) {
+    throw ImportError(ImportErrorKind::invalid_project, "configuration escapes project root");
+  }
   const auto config_path = root / "kc.json";
   std::ifstream input(config_path);
   if (!input) {
@@ -171,6 +189,11 @@ domain::ProjectConfig read_config(const std::filesystem::path& root) {
                                                 : parsed.issues.front().message;
       throw ImportError(ImportErrorKind::invalid_project,
                         "invalid project configuration: " + detail);
+    }
+    try {
+      domain::validate_project_paths(root, *parsed.value);
+    } catch (const std::invalid_argument& error) {
+      throw ImportError(ImportErrorKind::invalid_project, error.what());
     }
     return *parsed.value;
   } catch (const nlohmann::json::exception& error) {
@@ -242,7 +265,7 @@ std::optional<ImportResult> find_version_by_hash(
       .source_id = source.source_id,
       .sha256 = statement.text(6),
       .original_filename = statement.text(7),
-      .stored_path = statement.text(8),
+      .stored_path = domain::path_from_utf8(statement.text(8)),
       .media_type = statement.text(9),
       .byte_size = static_cast<std::uint64_t>(statement.integer(10)),
       .imported_at = statement.text(11)};
@@ -301,7 +324,7 @@ void insert_version(sqlite3* connection, const domain::SourceVersion& version) {
   statement.bind_text(2, version.source_id.value);
   statement.bind_text(3, version.sha256);
   statement.bind_text(4, version.original_filename);
-  statement.bind_text(5, version.stored_path.generic_string());
+  statement.bind_text(5, domain::path_to_utf8(version.stored_path));
   statement.bind_text(6, version.media_type);
   statement.bind_integer(7, static_cast<std::int64_t>(version.byte_size));
   statement.bind_text(8, version.imported_at);
@@ -315,7 +338,7 @@ void insert_version(sqlite3* connection, const domain::SourceVersion& version) {
 SourceImporter::SourceImporter(std::filesystem::path project_root)
     : project_root_(std::filesystem::absolute(std::move(project_root)).lexically_normal()),
       config_(read_config(project_root_)) {
-  const auto state_path = project_root_ / config_.paths.state;
+  const auto state_path = checked_state_path(project_root_, config_);
   if (!std::filesystem::is_regular_file(state_path)) {
     throw ImportError(ImportErrorKind::invalid_project,
                       "project state database does not exist; run 'kc init' first");
@@ -330,6 +353,8 @@ SourceImporter::SourceImporter(std::filesystem::path project_root)
 
 ImportResult SourceImporter::import_file(const std::filesystem::path& input_path,
                                         const ImportOptions& options) {
+  // Revalidate even when callers reuse an importer after editing directories.
+  static_cast<void>(read_config(project_root_));
   const auto format = source_format(input_path);
   std::error_code filesystem_error;
   if (!std::filesystem::is_regular_file(input_path, filesystem_error)) {
@@ -339,6 +364,9 @@ ImportResult SourceImporter::import_file(const std::filesystem::path& input_path
 
   const auto staging_directory =
       project_root_ / config_.paths.cache / "import-staging";
+  if (!domain::is_within(project_root_ / config_.paths.cache, staging_directory)) {
+    throw ImportError(ImportErrorKind::invalid_project, "unsafe import staging path");
+  }
   try {
     std::filesystem::create_directories(staging_directory);
   } catch (const std::filesystem::filesystem_error& error) {
@@ -365,13 +393,23 @@ ImportResult SourceImporter::import_file(const std::filesystem::path& input_path
   std::string hash;
   std::uint64_t byte_size = 0;
   try {
+    if (format.kind != domain::SourceKind::pdf) {
+      std::ifstream input(staged.path(), std::ios::binary);
+      const std::string text{std::istreambuf_iterator<char>(input), {}};
+      if (!input || !domain::is_valid_source_text(text)) {
+        throw ImportError(ImportErrorKind::invalid_input,
+                          "text input must be UTF-8 without embedded NULs");
+      }
+    }
     hash = sha256_file(staged.path());
     byte_size = std::filesystem::file_size(staged.path());
+  } catch (const ImportError&) {
+    throw;
   } catch (const std::exception& error) {
     throw ImportError(ImportErrorKind::unavailable_input, error.what());
   }
 
-  storage::Database database(project_root_ / config_.paths.state);
+  storage::Database database(checked_state_path(project_root_, config_));
   auto* connection = database.native_handle();
   database.execute("BEGIN IMMEDIATE;");
   std::filesystem::path newly_retained_path;
@@ -395,7 +433,9 @@ ImportResult SourceImporter::import_file(const std::filesystem::path& input_path
     // source's identity just because its file has the same digest.
     auto existing = find_version_by_hash(connection, hash);
     if (existing) {
-      if (!is_safe_relative(existing->version.stored_path)) {
+      if (!is_safe_relative(existing->version.stored_path) ||
+          !domain::is_within(project_root_ / config_.paths.sources,
+                             project_root_ / existing->version.stored_path)) {
         throw ImportError(ImportErrorKind::state_error,
                           "project database contains an unsafe retained source path");
       }
@@ -450,7 +490,9 @@ ImportResult SourceImporter::import_file(const std::filesystem::path& input_path
     version.stored_path =
         config_.paths.sources / source->source_id.value /
         version.source_version_id.value / filename;
-    if (!is_safe_relative(version.stored_path)) {
+    if (!is_safe_relative(version.stored_path) ||
+        !domain::is_within(project_root_ / config_.paths.sources,
+                           project_root_ / version.stored_path)) {
       throw ImportError(ImportErrorKind::invalid_project,
                         "configured source directory is not project-relative");
     }

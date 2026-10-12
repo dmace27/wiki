@@ -24,11 +24,12 @@ review state, audit history, and the local keyword index.
 | `schema_migrations` | Applied migration versions. |
 | `sources` | Logical source identity and display metadata. |
 | `source_versions` | Immutable, content-hashed imported versions. |
-| `source_pages` | Page-level text, image reference, and review status. |
+| `source_pages` | Page text/image digests, evidence revision, and review status. |
 | `extraction_runs` | Extraction/OCR diagnostics. |
 | `model_runs` | Model request metadata and validated/raw response record. |
 | `articles` | Generated concept article identity and vault location. |
 | `proposals` | Pending/reviewed/applied structured changes. |
+| `proposal_evidence` | Revisions and hashes of every page supplied to generation. |
 | `proposal_citations` | Evidence attached to proposed generated blocks. |
 | `article_citations` | Evidence currently represented in an applied article. |
 | `apply_runs` | Vault-write audit and backup reference. |
@@ -45,6 +46,13 @@ still defines the latest revision. Multiple versions can share a hash and
 `stored_path`; physical byte deduplication does not merge logical sources.
 See [source identity rules](SOURCE_IDENTITY.md). The initial DDL below is
 historical; apply all numbered migrations for the current schema.
+
+Migration `004_extraction_integrity.sql` adds page revisions and image digests,
+and records all selected generation evidence in `proposal_evidence`. Existing
+image hashes stay NULL until an uncited version is explicitly re-extracted;
+unknown hashes are diagnosed instead of silently trusted. See
+[extraction integrity and concurrency](EXTRACTION_INTEGRITY.md) for upgrade,
+path ownership, encoding, and race verification.
 
 ## Initial migration
 
