@@ -1,12 +1,14 @@
 #include "kc/domain/json.hpp"
 #include "kc/domain/types.hpp"
 #include "../test_support.hpp"
+#include "../contract_cases.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <string>
+#include <limits>
 
 namespace {
 
@@ -71,4 +73,77 @@ TEST_CASE("project paths cannot escape the project root") {
   auto document = kc::test::read_json(fixtures / "project-config.valid.json");
   document["paths"]["state"] = "../state.sqlite";
   CHECK_FALSE(kc::domain::parse_project_config(document).valid());
+}
+
+TEST_CASE("direct JSON conversion cannot bypass shared semantic contract checks") {
+  for (const auto& fixture : kc::test::contract_cases()) {
+    CAPTURE(fixture.at("name"));
+    const auto contract = kc::test::case_contract(fixture);
+    const auto document = kc::test::case_document(fixture);
+    const bool valid = fixture.at("runtime_valid").get<bool>();
+    const auto convert = [&] {
+      switch (contract) {
+        case kc::domain::JsonContract::project_config:
+          static_cast<void>(document.get<kc::domain::ProjectConfig>()); break;
+        case kc::domain::JsonContract::extracted_page:
+          static_cast<void>(document.get<kc::domain::ExtractedPage>()); break;
+        case kc::domain::JsonContract::citation:
+          static_cast<void>(document.get<kc::domain::Citation>()); break;
+        case kc::domain::JsonContract::article_proposal:
+          static_cast<void>(document.get<kc::domain::ArticleProposal>()); break;
+      }
+    };
+    if (valid) {
+      CHECK_NOTHROW(convert());
+    } else {
+      CHECK_THROWS(convert());
+    }
+  }
+}
+
+TEST_CASE("numeric wire syntax is checked before narrowing and preserves integer boundaries") {
+  const auto original = kc::test::read_json(fixtures / "project-config.valid.json");
+  for (const auto& token : {"1.0", "1e0", "1E+0", "1.9", "-1", "true", "\"1\"",
+                            "18446744073709551616", "1e100"}) {
+    auto config = original;
+    config["schema_version"] = nlohmann::json::parse(token);
+    const auto parsed = kc::domain::parse_project_config(config);
+    REQUIRE_FALSE(parsed);
+    REQUIRE_FALSE(parsed.issues.empty());
+    CHECK(parsed.issues.front().path == "/schema_version");
+  }
+  // A programmatically constructed signed positive integer and a wire-parsed
+  // unsigned integer both represent the accepted integer primitive.
+  auto config = original;
+  config["schema_version"] = std::int64_t{1};
+  CHECK(kc::domain::parse_project_config(config));
+  config["schema_version"] = std::uint64_t{1};
+  CHECK(kc::domain::parse_project_config(config));
+  auto citation = kc::test::read_json(fixtures / "citation.valid.json");
+  citation["start_char"] = nlohmann::json::parse("-0");
+  CHECK(kc::domain::parse_citation(citation));
+  citation["start_char"] = -0.0;
+  CHECK_FALSE(kc::domain::parse_citation(citation));
+}
+
+TEST_CASE("typed proposal validation rejects invalid content enums and storage offsets") {
+  const auto parsed = kc::domain::parse_article_proposal(
+      kc::test::read_json(fixtures / "article-proposal.valid.json"));
+  REQUIRE(parsed);
+  auto proposal = *parsed.value;
+  proposal.sections.front().blocks.clear();
+  CHECK_FALSE(kc::domain::validate(proposal));
+  proposal = *parsed.value;
+  proposal.operation = static_cast<kc::domain::ProposalOperation>(99);
+  CHECK_FALSE(kc::domain::validate(proposal));
+  proposal = *parsed.value;
+  proposal.sections.front().key = static_cast<kc::domain::SectionKey>(99);
+  CHECK_FALSE(kc::domain::validate(proposal));
+  proposal = *parsed.value;
+  proposal.sections.front().blocks.front().kind = static_cast<kc::domain::BlockKind>(99);
+  CHECK_FALSE(kc::domain::validate(proposal));
+  proposal = *parsed.value;
+  proposal.sections.front().blocks.front().citations.front().end_char =
+      std::numeric_limits<std::size_t>::max();
+  CHECK_FALSE(kc::domain::validate(proposal));
 }

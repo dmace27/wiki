@@ -64,6 +64,22 @@ std::string encode_ulid(const std::array<std::uint8_t, 16>& bytes) {
 
 }  // namespace
 
+bool is_valid_id(const std::string_view value, const std::string_view prefix) {
+  if (!value.starts_with(prefix) || value.size() != prefix.size() + 26U) {
+    return false;
+  }
+  const auto body = value.substr(prefix.size());
+  if (body.front() < '0' || body.front() > '7') {
+    return false;
+  }
+  for (const auto character : body) {
+    if (crockford.find(character) == std::string_view::npos) {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::string generate_prefixed_ulid(const std::string_view prefix) {
   return std::string(prefix) + encode_ulid(make_ulid_bytes());
 }

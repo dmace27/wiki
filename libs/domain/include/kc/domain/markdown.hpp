@@ -7,6 +7,11 @@
 
 namespace kc::domain {
 
+/// Shared visible UTF-8 text/ownership-marker check. Issue paths are relative
+/// to the text itself so callers can prepend their actual contract field.
+[[nodiscard]] ValidationResult validate_plain_text(
+    std::string_view text, bool single_line, bool allow_empty = false);
+
 /// Validate text that the compiler will place into Markdown. Used by parsing,
 /// generation, review, approval, and apply rather than deferred until writing.
 [[nodiscard]] ValidationResult validate_markdown(const ArticleProposal& proposal);

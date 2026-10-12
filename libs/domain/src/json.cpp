@@ -1,10 +1,13 @@
 #include "kc/domain/json.hpp"
+#include "kc/domain/schema.hpp"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <limits>
+#include <type_traits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -14,6 +17,54 @@ namespace kc::domain {
 namespace {
 
 using Json = nlohmann::json;
+
+/// Carry precise schema/semantic issue paths through nlohmann conversion hooks.
+class ContractError final : public std::invalid_argument {
+public:
+  explicit ContractError(ValidationResult result)
+      : std::invalid_argument(result.issues.front().path + ": " +
+                              result.issues.front().message),
+        issues(std::move(result.issues)) {}
+  std::vector<ValidationIssue> issues;
+};
+
+void require_shape(const JsonContract contract, const Json& document) {
+  auto result = validate_json_shape(contract, document);
+  if (!result) {
+    throw ContractError(std::move(result));
+  }
+}
+
+template <typename T>
+void require_semantics(const T& value) {
+  auto result = validate(value);
+  if (!result) {
+    throw ContractError(std::move(result));
+  }
+}
+
+/// Never ask nlohmann to narrow a number before checking its primitive and
+/// mathematical bounds. Signed nonnegative and unsigned integer tokens are
+/// accepted; decimals/exponents remain float tokens even when mathematically
+/// integral (for example 1.0 or 1e0).
+template <typename T>
+T read_unsigned(const Json& document, const std::string_view path,
+                const std::uint64_t policy_maximum) {
+  static_assert(std::is_unsigned_v<T>);
+  if (!document.is_number_integer() ||
+      (!document.is_number_unsigned() && document.get<std::int64_t>() < 0)) {
+    throw std::invalid_argument(std::string(path) + " must be a nonnegative JSON integer token");
+  }
+  const auto number = document.is_number_unsigned()
+      ? document.get<std::uint64_t>()
+      : static_cast<std::uint64_t>(document.get<std::int64_t>());
+  const auto maximum = std::min(policy_maximum,
+      static_cast<std::uint64_t>(std::numeric_limits<T>::max()));
+  if (number > maximum) {
+    throw std::invalid_argument(std::string(path) + " integer exceeds the supported maximum");
+  }
+  return static_cast<T>(number);
+}
 
 /// Reject a value unless it is a JSON object.
 void require_object(const Json& document, const std::string_view path) {
@@ -74,8 +125,8 @@ Citation parse_citation_value(const Json& document, const std::string_view path)
   require_keys(document, {"page_id", "start_char", "end_char", "quote"}, {}, path);
   Citation value;
   value.page_id = {document.at("page_id").get<std::string>()};
-  value.start_char = document.at("start_char").get<std::size_t>();
-  value.end_char = document.at("end_char").get<std::size_t>();
+  value.start_char = read_unsigned<std::size_t>(document.at("start_char"), std::string(path) + "/start_char", max_citation_start);
+  value.end_char = read_unsigned<std::size_t>(document.at("end_char"), std::string(path) + "/end_char", max_citation_end);
   value.quote = document.at("quote").get<std::string>();
   return value;
 }
@@ -87,12 +138,9 @@ ParseResult<T> parse_document(const Json& document, Parser&& parser) {
   ParseResult<T> result;
   try {
     T value = std::forward<Parser>(parser)(document);
-    const auto validation = validate(value);
-    if (!validation) {
-      result.issues = validation.issues;
-      return result;
-    }
     result.value = std::move(value);
+  } catch (const ContractError& error) {
+    result.issues = error.issues;
   } catch (const std::exception& error) {
     result.issues.push_back({"/", error.what()});
   }
@@ -110,10 +158,11 @@ Json citation_json(const Citation& value) {
 }  // namespace
 
 void from_json(const Json& document, ProjectConfig& value) {
+  require_shape(JsonContract::project_config, document);
   // Parse one nesting level at a time. This makes strict key checks and error
   // paths correspond directly to the documented configuration structure.
   require_keys(document, {"schema_version", "project_id", "paths", "vault", "providers"}, {}, "");
-  value.schema_version = document.at("schema_version").get<std::uint32_t>();
+  value.schema_version = read_unsigned<std::uint32_t>(document.at("schema_version"), "/schema_version", 1U);
   value.project_id = {document.at("project_id").get<std::string>()};
 
   const auto& paths = document.at("paths");
@@ -137,12 +186,13 @@ void from_json(const Json& document, ProjectConfig& value) {
   require_keys(ollama, {"base_url", "model", "timeout_seconds"}, {}, "/providers/llm/ollama");
   value.providers.llm.ollama.base_url = ollama.at("base_url").get<std::string>();
   value.providers.llm.ollama.model = ollama.at("model").get<std::string>();
-  value.providers.llm.ollama.timeout_seconds = ollama.at("timeout_seconds").get<std::uint32_t>();
+  value.providers.llm.ollama.timeout_seconds = read_unsigned<std::uint32_t>(ollama.at("timeout_seconds"), "/providers/llm/ollama/timeout_seconds", max_timeout_seconds);
 
   const auto& ocr = providers.at("ocr");
   require_keys(ocr, {"default", "language"}, {}, "/providers/ocr");
   value.providers.ocr.default_provider = ocr.at("default").get<std::string>();
   value.providers.ocr.language = ocr.at("language").get<std::string>();
+  require_semantics(value);
 }
 
 void to_json(Json& document, const ProjectConfig& value) {
@@ -172,12 +222,13 @@ void to_json(Json& document, const ProjectConfig& value) {
 }
 
 void from_json(const Json& document, ExtractedPage& value) {
+  require_shape(JsonContract::extracted_page, document);
   require_keys(document,
                {"page_id", "source_version_id", "page_number", "text", "text_status"},
                {"image_path", "language"}, "");
   value.page_id = {document.at("page_id").get<std::string>()};
   value.source_version_id = {document.at("source_version_id").get<std::string>()};
-  value.page_number = document.at("page_number").get<std::uint32_t>();
+  value.page_number = read_unsigned<std::uint32_t>(document.at("page_number"), "/page_number", std::numeric_limits<std::uint32_t>::max());
   if (document.contains("image_path")) {
     value.image_path = parse_path(document.at("image_path"), "/image_path");
   } else {
@@ -192,6 +243,7 @@ void from_json(const Json& document, ExtractedPage& value) {
        {"failed", TextStatus::failed}},
       "/text_status");
   value.language = document.value("language", "en");
+  require_semantics(value);
 }
 
 void to_json(Json& document, const ExtractedPage& value) {
@@ -206,16 +258,21 @@ void to_json(Json& document, const ExtractedPage& value) {
   }
 }
 
-void from_json(const Json& document, Citation& value) { value = parse_citation_value(document, ""); }
+void from_json(const Json& document, Citation& value) {
+  require_shape(JsonContract::citation, document);
+  value = parse_citation_value(document, "");
+  require_semantics(value);
+}
 
 void to_json(Json& document, const Citation& value) { document = citation_json(value); }
 
 void from_json(const Json& document, ArticleProposal& value) {
+  require_shape(JsonContract::article_proposal, document);
   // Proposals are deeply nested, so every array element gets an indexed path
   // such as /sections/0/blocks/1 for actionable validation messages.
   require_keys(document,
                {"schema_version", "operation", "article", "sections", "related_concepts"}, {}, "");
-  value.schema_version = document.at("schema_version").get<std::uint32_t>();
+  value.schema_version = read_unsigned<std::uint32_t>(document.at("schema_version"), "/schema_version", 1U);
   value.operation = parse_enum<ProposalOperation>(
       document.at("operation"),
       {{"create_article", ProposalOperation::create_article},
@@ -300,6 +357,7 @@ void from_json(const Json& document, ArticleProposal& value) {
     }
     value.related_concepts.push_back(std::move(related));
   }
+  require_semantics(value);
 }
 
 void to_json(Json& document, const ArticleProposal& value) {

@@ -82,6 +82,15 @@ add_test(
 )
 
 add_test(
+  NAME kc_cli_json_contract
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DKC_EXE=$<TARGET_FILE:kc>
+      -DKC_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-json-contract-project
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/kc_json_contract_test.cmake
+)
+
+add_test(
   NAME kc_cli_extract
   COMMAND
     ${CMAKE_COMMAND}

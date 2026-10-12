@@ -136,12 +136,31 @@ remain outside this task.
 
 **Confirmed configuration reproduction:** repeated `kc init` accepts `schema_version: 1.9`, `timeout_seconds: -1`, and `timeout_seconds: 1.5`. Conversion can truncate fractional values or wrap negative unsigned values before semantic checks.
 
-- [ ] Require the correct JSON primitive type and bounds before converting schema version, timeout, page number, and citation offsets. Reject booleans, floats, negatives, overflow, and numeric strings where integers are required.
-- [ ] Align standalone schemas, embedded prompt schema, and C++ validation. ID patterns currently vary between prefix-only checks, arbitrary-length patterns, and exact 26-character ULIDs.
-- [ ] Require meaningful article content, not merely a nonempty sections array containing empty blocks or whitespace-only prose. Define whether repeated section keys are intentional and validate accordingly.
-- [ ] Consolidate shared semantic checks so the compiler, reviewer, model runner, and writer agree on validity. Keep strict rejection of additional properties.
+- [x] Require the correct JSON primitive type and bounds before converting schema version, timeout, page number, and citation offsets. Reject booleans, floats, negatives, overflow, and numeric strings where integers are required.
+- [x] Align standalone schemas, embedded prompt schema, and C++ validation. ID patterns currently vary between prefix-only checks, arbitrary-length patterns, and exact 26-character ULIDs.
+- [x] Require meaningful article content, not merely a nonempty sections array containing empty blocks or whitespace-only prose. Define whether repeated section keys are intentional and validate accordingly.
+- [x] Consolidate shared semantic checks so the compiler, reviewer, model runner, and writer agree on validity. Keep strict rejection of additional properties.
 
 **Tests / done when:** run a common set of valid and invalid contract fixtures against runtime parsing and schema validation, covering every numeric boundary and structural mismatch. Invalid output must never become an approved proposal or article.
+
+**Completed October 12, 2026:** Numeric primitives and bounds are checked
+before schema evaluation or narrowing; decimal/exponent tokens, booleans,
+strings, negatives, and overflow are rejected. Public schemas are compiled into
+the domain library and reused by the model prompt, with identical citation
+constraints and canonical prefix/26-character ULID rules. Parsing and direct
+nlohmann conversion share schema and semantic validation. Every section must
+contain visible cited prose; repeated keys intentionally preserve ordered,
+independently cited sections. Unknown properties remain forbidden throughout.
+[Strict JSON contracts and verification](docs/JSON_CONTRACTS.md) document
+representation limits, semantic/evidence checks, compatibility, and reproduction.
+A shared **331-case** corpus exercises independent disk-schema validation,
+compiled shape validation, parsing/conversion, model generation, compiler
+publication, review, approval, and apply. Invalid output cannot enter approval
+or article publication, including manually marked legacy approvals. Development
+and ASan/UBSan (warnings-as-errors) suites each passed **105/105 tests**; the
+release build, initialization/idempotency smoke, and black-box numeric-config
+regression passed. Verification remains local macOS arm64; no other finish task
+was completed.
 
 ### 6. Close extraction integrity, path, and concurrency gaps — P0
 

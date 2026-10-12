@@ -1,0 +1,4350 @@
+[
+  {
+    "name": "project_config valid",
+    "contract": "project_config",
+    "patches": [],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "extracted_page valid",
+    "contract": "extracted_page",
+    "patches": [],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "citation valid",
+    "contract": "citation",
+    "patches": [],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "article_proposal valid",
+    "contract": "article_proposal",
+    "patches": [],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "project_config /schema_version boolean",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version false",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version negative",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": -1
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version fraction",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 1.5
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version integral decimal",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 1.0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version string",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": "1"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version null",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": null
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version object",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version array",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version uint64 maximum",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 18446744073709551615
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version beyond uint64",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 18446744073709551616
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version huge floating",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 1e+100
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version one above maximum",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 2
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version below minimum",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /schema_version minimum",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 1
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "project_config /schema_version maximum",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 1
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "article_proposal /schema_version boolean",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version false",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version negative",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": -1
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version fraction",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 1.5
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version integral decimal",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 1.0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version string",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": "1"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version null",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": null
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version object",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version array",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version uint64 maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 18446744073709551615
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version beyond uint64",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 18446744073709551616
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version huge floating",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 1e+100
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version one above maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 2
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version below minimum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /schema_version minimum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 1
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "article_proposal /schema_version maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 1
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds boolean",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds false",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds negative",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": -1
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds fraction",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": 1.5
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds integral decimal",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": 1.0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds string",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": "1"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds null",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": null
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds object",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds array",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds uint64 maximum",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": 18446744073709551615
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds beyond uint64",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": 18446744073709551616
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds huge floating",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": 1e+100
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds one above maximum",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": 2147483648
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds below minimum",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": 0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds minimum",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": 1
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "project_config /providers/llm/ollama/timeout_seconds maximum",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/providers/llm/ollama/timeout_seconds",
+        "value": 2147483647
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "extracted_page /page_number boolean",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number false",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number negative",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": -1
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number fraction",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": 1.5
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number integral decimal",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": 1.0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number string",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": "1"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number null",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": null
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number object",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number array",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number uint64 maximum",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": 18446744073709551615
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number beyond uint64",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": 18446744073709551616
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number huge floating",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": 1e+100
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number one above maximum",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": 4294967296
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number below minimum",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": 0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_number minimum",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": 1
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "extracted_page /page_number maximum",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_number",
+        "value": 4294967295
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "citation /start_char boolean",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char false",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char negative",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": -1
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char fraction",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": 1.5
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char integral decimal",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": 1.0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char string",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": "1"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char null",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": null
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char object",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char array",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char uint64 maximum",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": 18446744073709551615
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char beyond uint64",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": 18446744073709551616
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char huge floating",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": 1e+100
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char one above maximum",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": 9223372036854775807
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /start_char minimum",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": 0
+      },
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 14
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "citation /start_char maximum",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": 9223372036854775806
+      },
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 9223372036854775807
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "citation /end_char boolean",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char false",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char negative",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": -1
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char fraction",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 1.5
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char integral decimal",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 1.0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char string",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": "1"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char null",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": null
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char object",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char array",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char uint64 maximum",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 18446744073709551615
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char beyond uint64",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 18446744073709551616
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char huge floating",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 1e+100
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char one above maximum",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 9223372036854775808
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char below minimum",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /end_char minimum",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 1
+      },
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": 0
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "citation /end_char maximum",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 9223372036854775807
+      },
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": 0
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char boolean",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char false",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char negative",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": -1
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char fraction",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": 1.5
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char integral decimal",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": 1.0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char string",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": "1"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char null",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": null
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char object",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char array",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char uint64 maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": 18446744073709551615
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char beyond uint64",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": 18446744073709551616
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char huge floating",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": 1e+100
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char one above maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": 9223372036854775807
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char minimum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": 0
+      },
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": 14
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/start_char maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": 9223372036854775806
+      },
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": 9223372036854775807
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char boolean",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char false",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char negative",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": -1
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char fraction",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": 1.5
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char integral decimal",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": 1.0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char string",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": "1"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char null",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": null
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char object",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char array",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char uint64 maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": 18446744073709551615
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char beyond uint64",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": 18446744073709551616
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char huge floating",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": 1e+100
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char one above maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": 9223372036854775808
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char below minimum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": 0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char minimum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": 1
+      },
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": 0
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/end_char maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": 9223372036854775807
+      },
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": 0
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char boolean",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char false",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char negative",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": -1
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char fraction",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": 1.5
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char integral decimal",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": 1.0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char string",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": "1"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char null",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": null
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char object",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char array",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char uint64 maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": 18446744073709551615
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char beyond uint64",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": 18446744073709551616
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char huge floating",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": 1e+100
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char one above maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": 9223372036854775807
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char minimum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": 0
+      },
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": 14
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/start_char maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": 9223372036854775806
+      },
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": 9223372036854775807
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char boolean",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char false",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char negative",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": -1
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char fraction",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": 1.5
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char integral decimal",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": 1.0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char string",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": "1"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char null",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": null
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char object",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char array",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char uint64 maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": 18446744073709551615
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char beyond uint64",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": 18446744073709551616
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char huge floating",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": 1e+100
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char one above maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": 9223372036854775808
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char below minimum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": 0
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char minimum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": 1
+      },
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": 0
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/end_char maximum",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/end_char",
+        "value": 9223372036854775807
+      },
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/start_char",
+        "value": 0
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "config schema version 1.9",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/schema_version",
+        "value": 1.9
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal empty sections",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal empty blocks",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /sections/0/blocks/0/text empty",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/text",
+        "value": ""
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /sections/0/blocks/0/text ASCII whitespace",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/text",
+        "value": " \t\r\n "
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /sections/0/blocks/0/text Unicode whitespace",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/text",
+        "value": "   　"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /sections/0/heading empty",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/heading",
+        "value": ""
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /sections/0/heading ASCII whitespace",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/heading",
+        "value": " \t\r\n "
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /sections/0/heading Unicode whitespace",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/heading",
+        "value": "   　"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /article/aliases/0 empty",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/article/aliases/0",
+        "value": ""
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /article/aliases/0 ASCII whitespace",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/article/aliases/0",
+        "value": " \t\r\n "
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /article/aliases/0 Unicode whitespace",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/article/aliases/0",
+        "value": "   　"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /related_concepts/0/title empty",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/title",
+        "value": ""
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /related_concepts/0/title ASCII whitespace",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/title",
+        "value": " \t\r\n "
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /related_concepts/0/title Unicode whitespace",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/title",
+        "value": "   　"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /sections/0/blocks/0/citations/0/quote empty",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/quote",
+        "value": ""
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /sections/0/blocks/0/citations/0/quote ASCII whitespace",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/quote",
+        "value": " \t\r\n "
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /sections/0/blocks/0/citations/0/quote Unicode whitespace",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/quote",
+        "value": "   　"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /sections/0/blocks/0/citations missing evidence",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal /related_concepts/0/citations missing evidence",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal duplicate aliases",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/article/aliases",
+        "value": [
+          "alias",
+          "alias"
+        ]
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal create with article ID",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/article/article_id",
+        "value": "art_01J00000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal update missing article ID",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/operation",
+        "value": "update_article"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal valid update",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/operation",
+        "value": "update_article"
+      },
+      {
+        "op": "add",
+        "path": "/article/article_id",
+        "value": "art_01J00000000000000000000000"
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "proposal invalid operation",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/operation",
+        "value": "write_file"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal invalid section key",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/key",
+        "value": "invented"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal invalid block kind",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/kind",
+        "value": "html"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal unknown key root",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/unsupported",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal unknown key /article",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/article/unsupported",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal unknown key /sections/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/sections/0/unsupported",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal unknown key /sections/0/blocks/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/sections/0/blocks/0/unsupported",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal unknown key /sections/0/blocks/0/citations/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/sections/0/blocks/0/citations/0/unsupported",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal unknown key /related_concepts/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/related_concepts/0/unsupported",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal unknown key /related_concepts/0/citations/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/related_concepts/0/citations/0/unsupported",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /article",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/article",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /sections",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /sections/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /sections/0/blocks",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /sections/0/blocks/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0",
+        "value": null
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /sections/0/blocks/0/citations",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /sections/0/blocks/0/citations/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0",
+        "value": "wrong"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /article/aliases",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/article/aliases",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /article/aliases/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/article/aliases/0",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /article/title",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/article/title",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /article/slug",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/article/slug",
+        "value": 1
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /related_concepts",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /related_concepts/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /related_concepts/0/reason",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/reason",
+        "value": false
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /related_concepts/0/citations",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations",
+        "value": {}
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal wrong type /related_concepts/0/citations/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0",
+        "value": []
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /project_id short",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/project_id",
+        "value": "prj_0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /project_id long",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/project_id",
+        "value": "prj_000000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /project_id lowercase",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/project_id",
+        "value": "prj_01j00000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /project_id ambiguous letter",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/project_id",
+        "value": "prj_I0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /project_id ULID overflow",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/project_id",
+        "value": "prj_80000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config /project_id prefix only",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/project_id",
+        "value": "prj_"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_id short",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_id",
+        "value": "pg_0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_id long",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_id",
+        "value": "pg_000000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_id lowercase",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_id",
+        "value": "pg_01j00000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_id ambiguous letter",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_id",
+        "value": "pg_I0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_id ULID overflow",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_id",
+        "value": "pg_80000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /page_id prefix only",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_id",
+        "value": "pg_"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /source_version_id short",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/source_version_id",
+        "value": "ver_0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /source_version_id long",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/source_version_id",
+        "value": "ver_000000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /source_version_id lowercase",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/source_version_id",
+        "value": "ver_01j00000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /source_version_id ambiguous letter",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/source_version_id",
+        "value": "ver_I0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /source_version_id ULID overflow",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/source_version_id",
+        "value": "ver_80000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page /source_version_id prefix only",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/source_version_id",
+        "value": "ver_"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /page_id short",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_id",
+        "value": "pg_0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /page_id long",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_id",
+        "value": "pg_000000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /page_id lowercase",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_id",
+        "value": "pg_01j00000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /page_id ambiguous letter",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_id",
+        "value": "pg_I0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /page_id ULID overflow",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_id",
+        "value": "pg_80000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation /page_id prefix only",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/page_id",
+        "value": "pg_"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/page_id short",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/page_id",
+        "value": "pg_0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/page_id long",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/page_id",
+        "value": "pg_000000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/page_id lowercase",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/page_id",
+        "value": "pg_01j00000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/page_id ambiguous letter",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/page_id",
+        "value": "pg_I0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/page_id ULID overflow",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/page_id",
+        "value": "pg_80000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /sections/0/blocks/0/citations/0/page_id prefix only",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/page_id",
+        "value": "pg_"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/page_id short",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/page_id",
+        "value": "pg_0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/page_id long",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/page_id",
+        "value": "pg_000000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/page_id lowercase",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/page_id",
+        "value": "pg_01j00000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/page_id ambiguous letter",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/page_id",
+        "value": "pg_I0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/page_id ULID overflow",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/page_id",
+        "value": "pg_80000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal /related_concepts/0/citations/0/page_id prefix only",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/related_concepts/0/citations/0/page_id",
+        "value": "pg_"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal invalid article ID 0000000000000000000000000",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/operation",
+        "value": "update_article"
+      },
+      {
+        "op": "add",
+        "path": "/article/article_id",
+        "value": "art_0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal invalid article ID 000000000000000000000000000",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/operation",
+        "value": "update_article"
+      },
+      {
+        "op": "add",
+        "path": "/article/article_id",
+        "value": "art_000000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal invalid article ID 80000000000000000000000000",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/operation",
+        "value": "update_article"
+      },
+      {
+        "op": "add",
+        "path": "/article/article_id",
+        "value": "art_80000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal invalid article ID I0000000000000000000000000",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/operation",
+        "value": "update_article"
+      },
+      {
+        "op": "add",
+        "path": "/article/article_id",
+        "value": "art_I0000000000000000000000000"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config extra root property",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/unsupported",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page extra root property",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/unsupported",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation extra root property",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/unsupported",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal extra root property",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/unsupported",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation reversed span",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": 14
+      },
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 2
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation empty span",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/start_char",
+        "value": 2
+      },
+      {
+        "op": "replace",
+        "path": "/end_char",
+        "value": 2
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal reversed span",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/start_char",
+        "value": 14
+      },
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/citations/0/end_char",
+        "value": 2
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": false
+  },
+  {
+    "name": "config relative path escape",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/paths/state",
+        "value": "../state.sqlite"
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal reserved filename",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/article/title",
+        "value": "CON"
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal reserved marker",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/text",
+        "value": "<!-- kc:managed:end -->"
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal repeated section keys are supported",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/sections/-",
+        "value": {
+          "key": "working_explanation",
+          "heading": "My working explanation",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "A Markov chain moves between states using transition probabilities.",
+              "citations": [
+                {
+                  "page_id": "pg_01J00000000000000000000000",
+                  "start_char": 2,
+                  "end_char": 14,
+                  "quote": "Markov chain"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "proposal repeated keys cannot hide an empty section",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/sections/-",
+        "value": {
+          "key": "working_explanation",
+          "heading": "Empty",
+          "blocks": []
+        }
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal Unicode prose is meaningful",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/sections/0/blocks/0/text",
+        "value": "光合成 преобразует энергию"
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "project_config missing /schema_version",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/schema_version"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /project_id",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/project_id"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /paths",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/paths"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /vault",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/vault"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /providers",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/providers"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /paths/sources",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/paths/sources"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /paths/vault",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/paths/vault"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /paths/state",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/paths/state"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /paths/cache",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/paths/cache"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config extra key /paths",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/paths/unknown",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /vault/source_directory",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/vault/source_directory"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /vault/generated_section_id",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/vault/generated_section_id"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config extra key /vault",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/vault/unknown",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /providers/llm",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/providers/llm"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /providers/ocr",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/providers/ocr"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config extra key /providers",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/providers/unknown",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /providers/llm/default",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/providers/llm/default"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /providers/llm/ollama",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/providers/llm/ollama"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config extra key /providers/llm",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/providers/llm/unknown",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /providers/llm/ollama/base_url",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/providers/llm/ollama/base_url"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /providers/llm/ollama/model",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/providers/llm/ollama/model"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /providers/llm/ollama/timeout_seconds",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/providers/llm/ollama/timeout_seconds"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config extra key /providers/llm/ollama",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/providers/llm/ollama/unknown",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /providers/ocr/default",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/providers/ocr/default"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config missing /providers/ocr/language",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/providers/ocr/language"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "project_config extra key /providers/ocr",
+    "contract": "project_config",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/providers/ocr/unknown",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page missing /page_id",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/page_id"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page missing /source_version_id",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/source_version_id"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page missing /page_number",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/page_number"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page missing /text",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/text"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "extracted_page missing /text_status",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/text_status"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation missing /page_id",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/page_id"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation missing /start_char",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/start_char"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation missing /end_char",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/end_char"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "citation missing /quote",
+    "contract": "citation",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/quote"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /schema_version",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/schema_version"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /operation",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/operation"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /article",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/article"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /sections",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/sections"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /related_concepts",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/related_concepts"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /article/title",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/article/title"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /article/slug",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/article/slug"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal extra key /article",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/article/unknown",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /sections/0/key",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/sections/0/key"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /sections/0/heading",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/sections/0/heading"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /sections/0/blocks",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/sections/0/blocks"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal extra key /sections/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/sections/0/unknown",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /sections/0/blocks/0/kind",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/sections/0/blocks/0/kind"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /sections/0/blocks/0/text",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/sections/0/blocks/0/text"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /sections/0/blocks/0/citations",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/sections/0/blocks/0/citations"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal extra key /sections/0/blocks/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/sections/0/blocks/0/unknown",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /sections/0/blocks/0/citations/0/page_id",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/sections/0/blocks/0/citations/0/page_id"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /sections/0/blocks/0/citations/0/start_char",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/sections/0/blocks/0/citations/0/start_char"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /sections/0/blocks/0/citations/0/end_char",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/sections/0/blocks/0/citations/0/end_char"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /sections/0/blocks/0/citations/0/quote",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/sections/0/blocks/0/citations/0/quote"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal extra key /sections/0/blocks/0/citations/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/sections/0/blocks/0/citations/0/unknown",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /related_concepts/0/title",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/related_concepts/0/title"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /related_concepts/0/reason",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/related_concepts/0/reason"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /related_concepts/0/citations",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/related_concepts/0/citations"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal extra key /related_concepts/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/related_concepts/0/unknown",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /related_concepts/0/citations/0/page_id",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/related_concepts/0/citations/0/page_id"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /related_concepts/0/citations/0/start_char",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/related_concepts/0/citations/0/start_char"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /related_concepts/0/citations/0/end_char",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/related_concepts/0/citations/0/end_char"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal missing /related_concepts/0/citations/0/quote",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/related_concepts/0/citations/0/quote"
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "article_proposal extra key /related_concepts/0/citations/0",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "add",
+        "path": "/related_concepts/0/citations/0/unknown",
+        "value": true
+      }
+    ],
+    "schema_valid": false,
+    "runtime_valid": false
+  },
+  {
+    "name": "proposal absent optional aliases",
+    "contract": "article_proposal",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/article/aliases"
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  },
+  {
+    "name": "page absent optional language",
+    "contract": "extracted_page",
+    "patches": [
+      {
+        "op": "remove",
+        "path": "/language"
+      }
+    ],
+    "schema_valid": true,
+    "runtime_valid": true
+  }
+]

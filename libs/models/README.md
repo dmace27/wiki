@@ -29,7 +29,7 @@ a pending proposal after page selection and compiler-level validation.
 The adapter posts to `<base_url>/api/chat` with:
 
 - `stream: false`, so one complete JSON envelope is validated;
-- the complete proposal JSON Schema in `format`;
+- the complete proposal JSON Schema in `format`, compiled from the public schemas;
 - the same schema in the prompt to ground smaller local models; and
 - `temperature: 0` for deterministic structured output.
 
@@ -62,3 +62,9 @@ Response parsing also enforces the shared
 and related destinations, valid Unicode, and no reserved ownership markers.
 The prompt requests plain text; the writer escapes model markup and folds
 multiline prose. Unsafe output never becomes an approvable proposal.
+
+The [strict JSON contract](../../docs/JSON_CONTRACTS.md) rejects numeric
+coercion and requires meaningful cited blocks in every section. Public schemas,
+runtime shape validation, and the model schema share one source. Repeated
+section keys are supported as ordered independent sections. Domain semantics
+also apply to typed adapter output, review, approval, and application.

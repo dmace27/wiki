@@ -1,4 +1,5 @@
 #include "../test_support.hpp"
+#include "../contract_cases.hpp"
 #include "kc/domain/id.hpp"
 #include "kc/review/review_service.hpp"
 #include "kc/search/search_index.hpp"
@@ -572,4 +573,35 @@ TEST_CASE("final articles reject extra ownership markers and shadowed source foo
   CHECK_THROWS_AS(writer.apply(update), kc::vault::VaultError);
   CHECK(read_file(path) == content);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 1);
+}
+
+TEST_CASE("common invalid JSON contracts cannot bypass review approval or apply") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto seeded = seed_create_proposal(root, database);
+  kc::vault::VaultWriter writer(root);
+  kc::review::ReviewService review(root);
+  for (const auto& fixture : kc::test::contract_cases()) {
+    if (kc::test::case_contract(fixture) != kc::domain::JsonContract::article_proposal ||
+        fixture.at("runtime_valid").get<bool>()) {
+      continue;
+    }
+    CAPTURE(fixture.at("name"));
+    const auto document = kc::test::case_document(fixture);
+    database.execute("UPDATE proposals SET status = 'pending', payload_json = " + sql_string(document.dump()));
+    CHECK_THROWS_AS(review.review_proposal(seeded.proposal_id), kc::review::ReviewError);
+    CHECK_THROWS_AS(writer.approve(seeded.proposal_id), kc::vault::VaultError);
+    CHECK(database.scalar_text("SELECT status FROM proposals") == "pending");
+    // Corrupt/legacy approvals are revalidated, not trusted as a parsing bypass.
+    database.execute("UPDATE proposals SET status = 'approved'");
+    CHECK_THROWS_AS(writer.apply(seeded.proposal_id), kc::vault::VaultError);
+    CHECK(database.scalar_text("SELECT status FROM proposals") == "approved");
+  }
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM articles") == 0);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM article_fts") == 0);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 0);
+  CHECK(std::filesystem::is_empty(root / "vault"));
+  CHECK(std::filesystem::is_empty(root / ".knowledge-compiler/backups"));
 }

@@ -1,6 +1,7 @@
 #include "concept_prompt.hpp"
 
 #include "kc/domain/types.hpp"
+#include "kc/domain/schema.hpp"
 #include "kc/models/concept.hpp"
 
 #include <nlohmann/json.hpp>
@@ -8,126 +9,9 @@
 #include <string>
 
 namespace kc::models::detail {
-namespace {
-
-/// Return the schema sent through Ollama's `format` field.
-///
-/// The citation definition is embedded with a local `$ref`; the documented
-/// standalone schema uses a file reference that a remote model server could
-/// not resolve. Keeping this schema self-contained makes the request portable.
-nlohmann::json article_proposal_schema() {
-  static const auto schema = nlohmann::json::parse(R"json(
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "$defs": {
-    "citation": {
-      "type": "object",
-      "required": ["page_id", "start_char", "end_char", "quote"],
-      "properties": {
-        "page_id": {
-          "type": "string",
-          "pattern": "^pg_[0-9A-HJKMNP-TV-Z]{26}$"
-        },
-        "start_char": {"type": "integer", "minimum": 0},
-        "end_char": {"type": "integer", "minimum": 1},
-        "quote": {"type": "string", "minLength": 1}
-      },
-      "additionalProperties": false
-    }
-  },
-  "required": [
-    "schema_version", "operation", "article", "sections",
-    "related_concepts"
-  ],
-  "properties": {
-    "schema_version": {"const": 1},
-    "operation": {"enum": ["create_article", "update_article"]},
-    "article": {
-      "type": "object",
-      "required": ["title", "slug"],
-      "properties": {
-        "article_id": {
-          "type": "string",
-          "pattern": "^art_[0-9A-HJKMNP-TV-Z]{26}$"
-        },
-        "title": {"type": "string", "minLength": 1},
-        "slug": {
-          "type": "string",
-          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-        },
-        "aliases": {
-          "type": "array",
-          "items": {"type": "string"},
-          "uniqueItems": true
-        }
-      },
-      "additionalProperties": false
-    },
-    "sections": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "required": ["key", "heading", "blocks"],
-        "properties": {
-          "key": {
-            "enum": [
-              "working_explanation", "key_ideas", "example",
-              "related_concepts"
-            ]
-          },
-          "heading": {"type": "string"},
-          "blocks": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["kind", "text", "citations"],
-              "properties": {
-                "kind": {"enum": ["paragraph", "bullet"]},
-                "text": {"type": "string", "minLength": 1},
-                "citations": {
-                  "type": "array",
-                  "minItems": 1,
-                  "items": {"$ref": "#/$defs/citation"}
-                }
-              },
-              "additionalProperties": false
-            }
-          }
-        },
-        "additionalProperties": false
-      }
-    },
-    "related_concepts": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["title", "reason", "citations"],
-        "properties": {
-          "title": {"type": "string"},
-          "reason": {"type": "string"},
-          "citations": {
-            "type": "array",
-            "minItems": 1,
-            "items": {"$ref": "#/$defs/citation"}
-          }
-        },
-        "additionalProperties": false
-      }
-    }
-  },
-  "additionalProperties": false
-}
-)json");
-  return schema;
-}
-
-}  // namespace
-
 LanguageModelRequest build_concept_prompt(
     const ProposalGenerationRequest& request) {
-  const auto schema = article_proposal_schema();
+  const auto& schema = domain::contract_schema(domain::JsonContract::article_proposal);
 
   // Encode evidence as JSON inside the prompt. This preserves page IDs and
   // newlines exactly and avoids ambiguous hand-written page delimiters.
@@ -164,7 +48,9 @@ LanguageModelRequest build_concept_prompt(
       "The article title must exactly equal Target.concept and the article "
       "slug must exactly equal Target.slug. Adapt "
       "the explanation, key ideas, and example to the subject rather than "
-      "assuming it is a mathematics topic.\n\n";
+      "assuming it is a mathematics topic. Every section must contain a nonempty "
+      "cited block. Repeated section keys are allowed for multiple examples; "
+      "each occurrence is rendered in order.\n\n";
   user_prompt +=
       "All text fields are plain text, not Markdown or HTML. The writer "
       "escapes markup, creates all source footnotes and related links, and "

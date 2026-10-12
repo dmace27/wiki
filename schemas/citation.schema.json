@@ -3,13 +3,34 @@
   "$id": "citation.schema.json",
   "title": "Citation",
   "type": "object",
-  "required": ["page_id", "start_char", "end_char", "quote"],
+  "required": [
+    "page_id",
+    "start_char",
+    "end_char",
+    "quote"
+  ],
   "properties": {
-    "page_id": { "type": "string", "pattern": "^pg_" },
-    "start_char": { "type": "integer", "minimum": 0 },
-    "end_char": { "type": "integer", "minimum": 1 },
-    "quote": { "type": "string", "minLength": 1 }
+    "page_id": {
+      "type": "string",
+      "pattern": "^pg_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "minLength": 29,
+      "maxLength": 29
+    },
+    "start_char": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775806
+    },
+    "end_char": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "quote": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!(?:\\s|\u0085|\u00a0|\u1680|\u2000|\u2001|\u2002|\u2003|\u2004|\u2005|\u2006|\u2007|\u2008|\u2009|\u200a|\u2028|\u2029|\u202f|\u205f|\u3000)*$)"
+    }
   },
   "additionalProperties": false
 }
-

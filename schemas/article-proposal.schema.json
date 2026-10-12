@@ -3,20 +3,52 @@
   "$id": "article-proposal.schema.json",
   "title": "ArticleProposal",
   "type": "object",
-  "required": ["schema_version", "operation", "article", "sections", "related_concepts"],
+  "required": [
+    "schema_version",
+    "operation",
+    "article",
+    "sections",
+    "related_concepts"
+  ],
   "properties": {
-    "schema_version": { "const": 1 },
-    "operation": { "enum": ["create_article", "update_article"] },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "operation": {
+      "enum": [
+        "create_article",
+        "update_article"
+      ]
+    },
     "article": {
       "type": "object",
-      "required": ["title", "slug"],
+      "required": [
+        "title",
+        "slug"
+      ],
       "properties": {
-        "article_id": { "type": "string", "pattern": "^art_" },
-        "title": { "type": "string", "minLength": 1 },
-        "slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "article_id": {
+          "type": "string",
+          "pattern": "^art_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "minLength": 30,
+          "maxLength": 30
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
         "aliases": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!(?:\\s|\u0085|\u00a0|\u1680|\u2000|\u2001|\u2002|\u2003|\u2004|\u2005|\u2006|\u2007|\u2008|\u2009|\u200a|\u2028|\u2029|\u202f|\u205f|\u3000)*$)"
+          },
           "uniqueItems": true
         }
       },
@@ -27,28 +59,57 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["key", "heading", "blocks"],
+        "required": [
+          "key",
+          "heading",
+          "blocks"
+        ],
         "properties": {
           "key": {
-            "enum": ["working_explanation", "key_ideas", "example", "related_concepts"]
+            "enum": [
+              "working_explanation",
+              "key_ideas",
+              "example",
+              "related_concepts"
+            ]
           },
-          "heading": { "type": "string" },
+          "heading": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!(?:\\s|\u0085|\u00a0|\u1680|\u2000|\u2001|\u2002|\u2003|\u2004|\u2005|\u2006|\u2007|\u2008|\u2009|\u200a|\u2028|\u2029|\u202f|\u205f|\u3000)*$)"
+          },
           "blocks": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["kind", "text", "citations"],
+              "required": [
+                "kind",
+                "text",
+                "citations"
+              ],
               "properties": {
-                "kind": { "enum": ["paragraph", "bullet"] },
-                "text": { "type": "string", "minLength": 1 },
+                "kind": {
+                  "enum": [
+                    "paragraph",
+                    "bullet"
+                  ]
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!(?:\\s|\u0085|\u00a0|\u1680|\u2000|\u2001|\u2002|\u2003|\u2004|\u2005|\u2006|\u2007|\u2008|\u2009|\u200a|\u2028|\u2029|\u202f|\u205f|\u3000)*$)"
+                },
                 "citations": {
                   "type": "array",
                   "minItems": 1,
-                  "items": { "$ref": "citation.schema.json" }
+                  "items": {
+                    "$ref": "citation.schema.json"
+                  }
                 }
               },
               "additionalProperties": false
-            }
+            },
+            "minItems": 1
           }
         },
         "additionalProperties": false
@@ -58,20 +119,71 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["title", "reason", "citations"],
+        "required": [
+          "title",
+          "reason",
+          "citations"
+        ],
         "properties": {
-          "title": { "type": "string" },
-          "reason": { "type": "string" },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!(?:\\s|\u0085|\u00a0|\u1680|\u2000|\u2001|\u2002|\u2003|\u2004|\u2005|\u2006|\u2007|\u2008|\u2009|\u200a|\u2028|\u2029|\u202f|\u205f|\u3000)*$)"
+          },
+          "reason": {
+            "type": "string"
+          },
           "citations": {
             "type": "array",
             "minItems": 1,
-            "items": { "$ref": "citation.schema.json" }
+            "items": {
+              "$ref": "citation.schema.json"
+            }
           }
         },
         "additionalProperties": false
       }
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "create_article"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "article": {
+            "not": {
+              "required": [
+                "article_id"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "update_article"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "article": {
+            "required": [
+              "article_id"
+            ]
+          }
+        }
+      }
+    }
+  ]
 }
-

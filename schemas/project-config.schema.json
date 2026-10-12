@@ -3,46 +3,109 @@
   "$id": "project-config.schema.json",
   "title": "ProjectConfig",
   "type": "object",
-  "required": ["schema_version", "project_id", "paths", "vault", "providers"],
+  "required": [
+    "schema_version",
+    "project_id",
+    "paths",
+    "vault",
+    "providers"
+  ],
   "properties": {
-    "schema_version": { "const": 1 },
-    "project_id": { "type": "string", "pattern": "^prj_[0-9A-HJKMNP-TV-Z]+$" },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^prj_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "minLength": 30,
+      "maxLength": 30
+    },
     "paths": {
       "type": "object",
-      "required": ["sources", "vault", "state", "cache"],
+      "required": [
+        "sources",
+        "vault",
+        "state",
+        "cache"
+      ],
       "properties": {
-        "sources": { "type": "string", "minLength": 1 },
-        "vault": { "type": "string", "minLength": 1 },
-        "state": { "type": "string", "minLength": 1 },
-        "cache": { "type": "string", "minLength": 1 }
+        "sources": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vault": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cache": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
     "vault": {
       "type": "object",
-      "required": ["source_directory", "generated_section_id"],
+      "required": [
+        "source_directory",
+        "generated_section_id"
+      ],
       "properties": {
-        "source_directory": { "type": "string", "minLength": 1 },
-        "generated_section_id": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$" }
+        "source_directory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generated_section_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,128}$"
+        }
       },
       "additionalProperties": false
     },
     "providers": {
       "type": "object",
-      "required": ["llm", "ocr"],
+      "required": [
+        "llm",
+        "ocr"
+      ],
       "properties": {
         "llm": {
           "type": "object",
-          "required": ["default", "ollama"],
+          "required": [
+            "default",
+            "ollama"
+          ],
           "properties": {
-            "default": { "type": "string", "minLength": 1 },
+            "default": {
+              "type": "string",
+              "minLength": 1
+            },
             "ollama": {
               "type": "object",
-              "required": ["base_url", "model", "timeout_seconds"],
+              "required": [
+                "base_url",
+                "model",
+                "timeout_seconds"
+              ],
               "properties": {
-                "base_url": { "type": "string", "minLength": 1 },
-                "model": { "type": "string", "minLength": 1 },
-                "timeout_seconds": { "type": "integer", "minimum": 1 }
+                "base_url": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timeout_seconds": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 2147483647
+                }
               },
               "additionalProperties": false
             }
@@ -51,10 +114,19 @@
         },
         "ocr": {
           "type": "object",
-          "required": ["default", "language"],
+          "required": [
+            "default",
+            "language"
+          ],
           "properties": {
-            "default": { "type": "string", "minLength": 1 },
-            "language": { "type": "string", "minLength": 1 }
+            "default": {
+              "type": "string",
+              "minLength": 1
+            },
+            "language": {
+              "type": "string",
+              "minLength": 1
+            }
           },
           "additionalProperties": false
         }
@@ -64,4 +136,3 @@
   },
   "additionalProperties": false
 }
-

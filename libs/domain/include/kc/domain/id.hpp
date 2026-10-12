@@ -6,6 +6,10 @@
 
 namespace kc::domain {
 
+/// Exact prefix plus a canonical 26-byte Crockford ULID. The leading digit is
+/// 0-7 so the 130-bit encoding cannot overflow its 128-bit value.
+[[nodiscard]] bool is_valid_id(std::string_view value, std::string_view prefix);
+
 /// Creates a ULID and prepends `prefix` to make the ID's purpose visible.
 ///
 /// A ULID is a 26-character identifier containing a creation timestamp plus

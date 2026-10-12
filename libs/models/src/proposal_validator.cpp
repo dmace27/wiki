@@ -1,6 +1,7 @@
 #include "kc/models/proposal_validator.hpp"
 
 #include "kc/models/concept.hpp"
+#include "kc/domain/id.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -107,15 +108,15 @@ domain::ValidationResult ProposalValidator::validate_request(
     add_issue(result, "/article_id",
               "must be absent for a create_article request");
   }
+  if (domain::to_string(request.operation).empty()) {
+    add_issue(result, "/operation", "must be a supported operation");
+  }
   if (request.operation == domain::ProposalOperation::update_article &&
       !request.article_id) {
     add_issue(result, "/article_id",
               "is required for an update_article request");
   }
-  if (request.article_id &&
-      !std::regex_match(
-          request.article_id->value,
-          std::regex("^art_[0-9A-HJKMNP-TV-Z]{26}$"))) {
+  if (request.article_id && !domain::is_valid_id(request.article_id->value, "art_")) {
     add_issue(result, "/article_id", "must be an art_ ULID");
   }
 
@@ -158,16 +159,10 @@ domain::ValidationResult ProposalValidator::validate_response(
               "must equal the canonical slug for the requested concept");
   }
 
-  if (request.operation == domain::ProposalOperation::create_article &&
-      proposal.article.article_id) {
-    add_issue(result, "/article/article_id",
-              "must be absent when creating an article");
-  }
-  if (request.operation == domain::ProposalOperation::update_article &&
-      (!proposal.article.article_id || !request.article_id ||
-       *proposal.article.article_id != *request.article_id)) {
-    add_issue(result, "/article/article_id",
-              "must match the requested article ID");
+  // Presence/operation rules are owned by domain::validate. This comparison
+  // adds only the request-specific identity binding needed at generation time.
+  if (proposal.article.article_id != request.article_id) {
+    add_issue(result, "/article/article_id", "must match the requested article ID");
   }
 
   PageIndex pages;

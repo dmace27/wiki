@@ -2,7 +2,7 @@
 
 ## General conventions
 
-- IDs are opaque ULIDs with a type prefix: `src_`, `ver_`, `pg_`, `art_`,
+- IDs are opaque ULIDs with a type prefix: `prj_`, `src_`, `ver_`, `pg_`, `art_`,
   `prp_`, and `run_`.
 - Timestamps are UTC RFC 3339 strings.
 - Content hashes use lowercase SHA-256 hex.
@@ -16,7 +16,7 @@
 ```json
 {
   "schema_version": 1,
-  "project_id": "prj_01j...",
+  "project_id": "prj_01J00000000000000000000000",
   "paths": {
     "sources": "sources",
     "vault": "vault",
@@ -44,64 +44,23 @@
 }
 ```
 
-API configuration may contain an environment-variable name such as
-`"api_key_env": "KNOWLEDGE_COMPILER_API_KEY"`, but never a credential value.
+`api_key_env` is not part of the current configuration schema. Unknown keys
+are rejected; provider extensions require an explicit contract change.
 
 ## Extracted page schema
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ExtractedPage",
-  "type": "object",
-  "required": [
-    "page_id",
-    "source_version_id",
-    "page_number",
-    "text",
-    "text_status"
-  ],
-  "properties": {
-    "page_id": {
-      "type": "string",
-      "pattern": "^pg_[0-9A-HJKMNP-TV-Z]+$"
-    },
-    "source_version_id": {
-      "type": "string",
-      "pattern": "^ver_[0-9A-HJKMNP-TV-Z]+$"
-    },
-    "page_number": { "type": "integer", "minimum": 1 },
-    "image_path": { "type": "string" },
-    "text": { "type": "string" },
-    "text_status": {
-      "enum": ["native", "ocr_unreviewed", "reviewed", "failed"]
-    },
-    "language": { "type": "string", "default": "en" }
-  },
-  "additionalProperties": false
-}
-```
+The authoritative schema is [extracted-page.schema.json](../schemas/extracted-page.schema.json).
+See [Strict JSON contracts](JSON_CONTRACTS.md) for numeric bounds, exact IDs,
+structural validation, and shared semantic checks.
 
 Markdown and TXT sources create one logical page. Each PDF page creates exactly
 one page record, even when text or OCR extraction fails.
 
 ## Citation schema
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Citation",
-  "type": "object",
-  "required": ["page_id", "start_char", "end_char", "quote"],
-  "properties": {
-    "page_id": { "type": "string", "pattern": "^pg_" },
-    "start_char": { "type": "integer", "minimum": 0 },
-    "end_char": { "type": "integer", "minimum": 1 },
-    "quote": { "type": "string", "minLength": 1 }
-  },
-  "additionalProperties": false
-}
-```
+The authoritative schema is [citation.schema.json](../schemas/citation.schema.json).
+See [Strict JSON contracts](JSON_CONTRACTS.md) for numeric bounds, exact IDs,
+structural validation, and shared semantic checks.
 
 Validation requirements:
 
@@ -121,97 +80,9 @@ substring. Invalid output never becomes a proposal.
 The LLM returns this proposal. It cannot request paths, Markdown, commands, or
 arbitrary operations.
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ArticleProposal",
-  "type": "object",
-  "required": [
-    "schema_version",
-    "operation",
-    "article",
-    "sections",
-    "related_concepts"
-  ],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "operation": { "enum": ["create_article", "update_article"] },
-    "article": {
-      "type": "object",
-      "required": ["title", "slug"],
-      "properties": {
-        "article_id": { "type": "string", "pattern": "^art_" },
-        "title": { "type": "string", "minLength": 1 },
-        "slug": {
-          "type": "string",
-          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-        },
-        "aliases": {
-          "type": "array",
-          "items": { "type": "string" },
-          "uniqueItems": true
-        }
-      },
-      "additionalProperties": false
-    },
-    "sections": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "required": ["key", "heading", "blocks"],
-        "properties": {
-          "key": {
-            "enum": [
-              "working_explanation",
-              "key_ideas",
-              "example",
-              "related_concepts"
-            ]
-          },
-          "heading": { "type": "string" },
-          "blocks": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["kind", "text", "citations"],
-              "properties": {
-                "kind": { "enum": ["paragraph", "bullet"] },
-                "text": { "type": "string", "minLength": 1 },
-                "citations": {
-                  "type": "array",
-                  "minItems": 1,
-                  "items": { "$ref": "citation.schema.json" }
-                }
-              },
-              "additionalProperties": false
-            }
-          }
-        },
-        "additionalProperties": false
-      }
-    },
-    "related_concepts": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["title", "reason", "citations"],
-        "properties": {
-          "title": { "type": "string" },
-          "reason": { "type": "string" },
-          "citations": {
-            "type": "array",
-            "minItems": 1,
-            "items": { "$ref": "citation.schema.json" }
-          }
-        },
-        "additionalProperties": false
-      }
-    }
-  },
-  "additionalProperties": false
-}
-```
+The authoritative schema is [article-proposal.schema.json](../schemas/article-proposal.schema.json).
+See [Strict JSON contracts](JSON_CONTRACTS.md) for numeric bounds, exact IDs,
+structural validation, and shared semantic checks.
 
 ## Markdown format
 
@@ -242,21 +113,21 @@ aliases:
 
 ## My working explanation
 
-A Markov chain moves between states\. [^pg_01j_a]
+A Markov chain moves between states\. [^pg_01J00000000000000000000000]
 
 ## Key ideas
 
-- State\: the current condition of the process\. [^pg_01j_a]
-- Transition probability\: the chance of moving between states\. [^pg_01j_b]
+- State\: the current condition of the process\. [^pg_01J00000000000000000000000]
+- Transition probability\: the chance of moving between states\. [^pg_01J00000000000000000000001]
 
 ## Related concepts
 
-- [[Conditional Probability]] — Transitions use conditional probabilities\. [^pg_01j_a]
+- [[Conditional Probability]] — Transitions use conditional probabilities\. [^pg_01J00000000000000000000000]
 
 ## Sources
 
-[^pg_01j_a]: [Probability Notes, Week 8, p. 3](_sources/src_01j...pdf#page=3)
-[^pg_01j_b]: [Probability Notes, Week 8, p. 4](_sources/src_01j...pdf#page=4)
+[^pg_01J00000000000000000000000]: [Probability Notes, Week 8, p. 3](_sources/src_01J00000000000000000000000-ver_01J00000000000000000000000.pdf#page=3)
+[^pg_01J00000000000000000000001]: [Probability Notes, Week 8, p. 4](_sources/src_01J00000000000000000000000-ver_01J00000000000000000000000.pdf#page=4)
 
 <!-- kc:managed:end -->
 

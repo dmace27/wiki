@@ -3,6 +3,7 @@
 #include "kc/storage/database.hpp"
 #include "kc/storage/project_initializer.hpp"
 #include "../test_support.hpp"
+#include "../contract_cases.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -112,6 +113,8 @@ TEST_CASE("Ollama settings, schema prompt, and completed runs are audited") {
   CHECK(request_body.at("options").at("temperature") == 0);
   CHECK(request_body.at("format").at("additionalProperties") == false);
   CHECK(request_body.at("format").contains("$defs"));
+  CHECK(request_body.at("format") == kc::domain::contract_schema(
+      kc::domain::JsonContract::article_proposal));
   REQUIRE(request_body.at("messages").size() == 2);
   CHECK(request_body.at("messages")[0].at("role") == "system");
   CHECK(request_body.at("messages")[1].at("content")
@@ -246,4 +249,33 @@ TEST_CASE("HTTP failures store only a fixed redacted diagnostic") {
       "FROM model_runs");
   CHECK(persisted.find("highly-sensitive-token") == std::string::npos);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals") == 0);
+}
+
+TEST_CASE("common invalid contract fixtures remain redacted invalid model responses") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  auto http = std::make_shared<RecordingHttpClient>();
+  kc::models::ModelRunner runner(root, http);
+  std::size_t invalid_count = 0;
+  for (const auto& fixture : kc::test::contract_cases()) {
+    if (kc::test::case_contract(fixture) != kc::domain::JsonContract::article_proposal ||
+        fixture.at("runtime_valid").get<bool>()) {
+      continue;
+    }
+    CAPTURE(fixture.at("name"));
+    http->next_response = ollama_envelope(kc::test::case_document(fixture).dump());
+    const auto result = runner.generate_concept(generation_request());
+    CHECK(result.status == kc::domain::ModelRunStatus::invalid_response);
+    CHECK_FALSE(result.proposal);
+    CHECK_FALSE(result.issues.empty());
+    ++invalid_count;
+  }
+  kc::storage::Database database(initialized.state_path);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM model_runs WHERE status = 'invalid_response'") ==
+        static_cast<std::int64_t>(invalid_count));
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM model_runs WHERE json_extract(response_json, '$.redacted') = 1") ==
+        static_cast<std::int64_t>(invalid_count));
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals") == 0);
+  CHECK(std::filesystem::is_empty(root / "vault"));
 }

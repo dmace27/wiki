@@ -184,6 +184,12 @@ evidence when no lexical match exists. The compiler stores normalized citations
 transactionally and never writes vault files. Invalid model output remains only
 a redacted failed model run and cannot become a pending proposal.
 
+Configuration, extracted pages, citations, and proposals share
+[strict JSON contracts](docs/JSON_CONTRACTS.md). Integer fields reject decimal
+and exponent notation, booleans, strings, negatives, and out-of-range values
+before conversion. Every proposed section must contain meaningful cited prose;
+repeated section keys remain supported for multiple examples.
+
 Case/Unicode/whitespace variants update the same concept while preserving its
 display title, slug, and filename. Slug collisions and nonportable titles fail
 before model generation. See [concept identity rules](docs/CONCEPT_IDENTITY.md)

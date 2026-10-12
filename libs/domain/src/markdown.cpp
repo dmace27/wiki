@@ -76,6 +76,14 @@ void check_citations(ValidationResult& result, const std::string& path,
 
 }  // namespace
 
+ValidationResult validate_plain_text(const std::string_view text,
+                                     const bool single_line,
+                                     const bool allow_empty) {
+  ValidationResult result;
+  check_text(result, "", text, single_line, allow_empty);
+  return result;
+}
+
 ValidationResult validate_markdown(const ArticleProposal& proposal) {
   ValidationResult result;
   check_text(result, "/article/title", proposal.article.title, true);

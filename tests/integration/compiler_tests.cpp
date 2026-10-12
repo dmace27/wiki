@@ -9,6 +9,7 @@
 #include "kc/storage/project_initializer.hpp"
 #include "kc/vault/vault_writer.hpp"
 #include "../test_support.hpp"
+#include "../contract_cases.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -821,4 +822,69 @@ TEST_CASE("unrenderable generated proposals never reach pending review") {
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals") == 0);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM model_runs WHERE status = 'invalid_response'") == 1);
   CHECK(std::filesystem::is_empty(root / "vault"));
+}
+
+TEST_CASE("common invalid contract fixtures cannot be persisted by the compiler") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  static_cast<void>(import_and_extract(root, temporary.path() / "notes.md",
+                                       "A Markov chain has the Markov property."));
+  auto state = std::make_shared<ModelState>();
+  kc::compiler::Compiler compiler(root, std::make_unique<StaticLanguageModel>(state));
+  const auto page = compiler.select_evidence({.concept_title = "Markov Chains"}).front();
+  auto base = kc::test::read_json(std::filesystem::path(KC_TEST_FIXTURES_DIR) / "article-proposal.valid.json");
+  base["sections"][0]["blocks"][0]["citations"][0]["page_id"] = page.page_id.value;
+  base["related_concepts"][0]["citations"][0]["page_id"] = page.page_id.value;
+  std::size_t invalid_count = 0;
+  for (const auto& fixture : kc::test::contract_cases()) {
+    if (kc::test::case_contract(fixture) != kc::domain::JsonContract::article_proposal ||
+        fixture.at("runtime_valid").get<bool>()) {
+      continue;
+    }
+    CAPTURE(fixture.at("name"));
+    state->response = base.patch(fixture.at("patches")).dump();
+    try {
+      static_cast<void>(compiler.compile({.concept_title = "Markov Chains"}));
+      FAIL("invalid output must not enter pending review");
+    } catch (const kc::compiler::CompilerError& error) {
+      CHECK(error.kind() == kc::compiler::CompilerErrorKind::validation_failed);
+    }
+    ++invalid_count;
+  }
+  kc::storage::Database database(initialized.state_path);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals") == 0);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM model_runs WHERE status = 'invalid_response'") ==
+        static_cast<std::int64_t>(invalid_count));
+  CHECK(std::filesystem::is_empty(root / "vault"));
+}
+
+TEST_CASE("repeated section keys preserve distinct cited blocks through apply") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  static_cast<void>(import_and_extract(root, temporary.path() / "notes.md",
+                                       "A Markov chain has the Markov property."));
+  kc::storage::Database database(initialized.state_path);
+  auto state = std::make_shared<ModelState>();
+  auto payload = create_proposal(database.scalar_text("SELECT page_id FROM source_pages"));
+  auto second = payload["sections"][0];
+  second["heading"] = "Another working example";
+  second["blocks"][0]["text"] = "A second supported example.";
+  payload["sections"].push_back(second);
+  state->response = payload.dump();
+  kc::compiler::Compiler compiler(root, std::make_unique<StaticLanguageModel>(state));
+  const auto proposal = compiler.compile({.concept_title = "Markov Chains"});
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposal_citations WHERE section_key = 'working_explanation'") == 2);
+  CHECK(database.scalar_integer("SELECT MAX(block_index) FROM proposal_citations WHERE section_key = 'working_explanation'") == 1);
+  kc::review::ReviewService review(root);
+  CHECK(review.review_proposal(proposal.proposal_id).proposal.sections.size() == 2U);
+  kc::vault::VaultWriter writer(root);
+  writer.approve(proposal.proposal_id);
+  const auto applied = writer.apply(proposal.proposal_id);
+  std::ifstream input(root / applied.vault_path);
+  const std::string content{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+  CHECK(content.find("## Another working example") != std::string::npos);
+  CHECK(content.find("A second supported example") != std::string::npos);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM article_citations WHERE section_key = 'working_explanation'") == 2);
 }

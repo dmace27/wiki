@@ -35,9 +35,9 @@ struct ParseResult {
 
 /// nlohmann/json conversion hooks.
 ///
-/// `to_json` serializes a C++ value; `from_json` performs the structural part
-/// of parsing. Application code should normally use the `parse_*` functions
-/// above because they run semantic validation as well.
+/// `to_json` serializes a C++ value. `from_json` enforces the same schema,
+/// integer-token, and semantic contract as `parse_*`, throwing on failure.
+/// Application code normally uses `parse_*` to receive structured issues.
 void to_json(nlohmann::json& document, const ProjectConfig& value);
 void from_json(const nlohmann::json& document, ProjectConfig& value);
 void to_json(nlohmann::json& document, const ExtractedPage& value);

@@ -3,16 +3,51 @@
   "$id": "extracted-page.schema.json",
   "title": "ExtractedPage",
   "type": "object",
-  "required": ["page_id", "source_version_id", "page_number", "text", "text_status"],
+  "required": [
+    "page_id",
+    "source_version_id",
+    "page_number",
+    "text",
+    "text_status"
+  ],
   "properties": {
-    "page_id": { "type": "string", "pattern": "^pg_[0-9A-HJKMNP-TV-Z]+$" },
-    "source_version_id": { "type": "string", "pattern": "^ver_[0-9A-HJKMNP-TV-Z]+$" },
-    "page_number": { "type": "integer", "minimum": 1 },
-    "image_path": { "type": "string" },
-    "text": { "type": "string" },
-    "text_status": { "enum": ["native", "ocr_unreviewed", "reviewed", "failed"] },
-    "language": { "type": "string", "default": "en" }
+    "page_id": {
+      "type": "string",
+      "pattern": "^pg_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "minLength": 29,
+      "maxLength": 29
+    },
+    "source_version_id": {
+      "type": "string",
+      "pattern": "^ver_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "minLength": 30,
+      "maxLength": 30
+    },
+    "page_number": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "image_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "text": {
+      "type": "string"
+    },
+    "text_status": {
+      "enum": [
+        "native",
+        "ocr_unreviewed",
+        "reviewed",
+        "failed"
+      ]
+    },
+    "language": {
+      "type": "string",
+      "default": "en",
+      "minLength": 1
+    }
   },
   "additionalProperties": false
 }
-

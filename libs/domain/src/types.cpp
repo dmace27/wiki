@@ -1,6 +1,8 @@
 #include "kc/domain/types.hpp"
 #include "kc/domain/concept.hpp"
 #include "kc/domain/markdown.hpp"
+#include "kc/domain/id.hpp"
+#include "kc/domain/schema.hpp"
 
 #include <algorithm>
 #include <regex>
@@ -10,14 +12,6 @@
 
 namespace kc::domain {
 namespace {
-
-constexpr std::string_view ulid_pattern = "[0-9A-HJKMNP-TV-Z]{26}";
-
-/// Check both the object-specific prefix and the 26-character ULID body.
-bool has_valid_id(const std::string& value, const std::string_view prefix) {
-  const std::regex pattern("^" + std::string(prefix) + std::string(ulid_pattern) + "$");
-  return std::regex_match(value, pattern);
-}
 
 /// Return true only for non-empty relative paths that cannot climb to a parent.
 bool is_project_relative(const std::filesystem::path& path) {
@@ -49,7 +43,7 @@ ValidationResult validate(const ProjectConfig& config) {
   // do not have to fix and rerun once per field.
   ValidationResult result;
   require(config.schema_version == 1U, result, "/schema_version", "must equal 1");
-  require(has_valid_id(config.project_id.value, "prj_"), result, "/project_id", "must be a prj_ ULID");
+  require(is_valid_id(config.project_id.value, "prj_"), result, "/project_id", "must be a prj_ ULID");
   require(is_project_relative(config.paths.sources), result, "/paths/sources", "must be project-relative");
   require(is_project_relative(config.paths.vault), result, "/paths/vault", "must be project-relative");
   require(is_project_relative(config.paths.state), result, "/paths/state", "must be project-relative");
@@ -59,6 +53,8 @@ ValidationResult validate(const ProjectConfig& config) {
   require(!config.providers.llm.default_provider.empty(), result, "/providers/llm/default", "must not be empty");
   require(!config.providers.llm.ollama.base_url.empty(), result, "/providers/llm/ollama/base_url", "must not be empty"); require(!config.providers.llm.ollama.model.empty(), result, "/providers/llm/ollama/model", "must not be empty");
   require(config.providers.llm.ollama.timeout_seconds > 0U, result, "/providers/llm/ollama/timeout_seconds", "must be positive");
+  require(config.providers.llm.ollama.timeout_seconds <= max_timeout_seconds,
+          result, "/providers/llm/ollama/timeout_seconds", "exceeds the portable curl timeout bound");
   require(!config.providers.ocr.default_provider.empty(), result, "/providers/ocr/default", "must not be empty");
   require(!config.providers.ocr.language.empty(), result, "/providers/ocr/language", "must not be empty");
   return result;
@@ -66,8 +62,9 @@ ValidationResult validate(const ProjectConfig& config) {
 
 ValidationResult validate(const ExtractedPage& page) {
   ValidationResult result;
-  require(has_valid_id(page.page_id.value, "pg_"), result, "/page_id", "must be a pg_ ULID");
-  require(has_valid_id(page.source_version_id.value, "ver_"), result, "/source_version_id", "must be a ver_ ULID");
+  require(is_valid_id(page.page_id.value, "pg_"), result, "/page_id", "must be a pg_ ULID");
+  require(is_valid_id(page.source_version_id.value, "ver_"), result, "/source_version_id", "must be a ver_ ULID");
+  require(!to_string(page.text_status).empty(), result, "/text_status", "must be a supported text status");
   require(page.page_number >= 1U, result, "/page_number", "must be at least 1");
   if (page.image_path) {
     require(is_project_relative(*page.image_path), result, "/image_path", "must be project-relative");
@@ -78,17 +75,24 @@ ValidationResult validate(const ExtractedPage& page) {
 
 ValidationResult validate(const Citation& citation) {
   ValidationResult result;
-  require(has_valid_id(citation.page_id.value, "pg_"), result, "/page_id", "must be a pg_ ULID");
+  require(is_valid_id(citation.page_id.value, "pg_"), result, "/page_id", "must be a pg_ ULID");
+  require(citation.start_char <= max_citation_start, result, "/start_char", "exceeds signed SQLite offset storage");
+  require(citation.end_char <= max_citation_end, result, "/end_char", "exceeds signed SQLite offset storage");
   require(citation.start_char < citation.end_char, result, "/end_char", "must be greater than start_char");
-  require(!citation.quote.empty(), result, "/quote", "must not be empty");
+  append(result, validate_plain_text(citation.quote, false), "/quote");
   return result;
 }
 
 ValidationResult validate(const ArticleProposal& proposal) {
-  // Structural parsing has already checked JSON shapes. These checks enforce
-  // semantic rules such as safe slugs, unique aliases, and cited content.
+  // The shared semantics also protect typed adapters that did not originate
+  // in JSON. Structural schema checks run before JSON values reach this layer.
   auto result = validate_markdown(proposal);
   require(proposal.schema_version == 1U, result, "/schema_version", "must equal 1");
+  require(!to_string(proposal.operation).empty(), result, "/operation", "must be a supported operation");
+  require(proposal.operation != ProposalOperation::create_article || !proposal.article.article_id,
+          result, "/article/article_id", "must be absent for create_article");
+  require(proposal.operation != ProposalOperation::update_article || proposal.article.article_id.has_value(),
+          result, "/article/article_id", "is required for update_article");
   try {
     static_cast<void>(normalize_concept_title(proposal.article.title));
     static_cast<void>(concept_filename(proposal.article.title));
@@ -98,7 +102,7 @@ ValidationResult validate(const ArticleProposal& proposal) {
   require(std::regex_match(proposal.article.slug, std::regex("^[a-z0-9]+(?:-[a-z0-9]+)*$")),
           result, "/article/slug", "must be a lowercase kebab-case slug");
   if (proposal.article.article_id) {
-    require(has_valid_id(proposal.article.article_id->value, "art_"), result, "/article/article_id", "must be an art_ ULID");
+    require(is_valid_id(proposal.article.article_id->value, "art_"), result, "/article/article_id", "must be an art_ ULID");
   }
   const std::set<std::string> aliases(proposal.article.aliases.begin(), proposal.article.aliases.end());
   require(aliases.size() == proposal.article.aliases.size(), result, "/article/aliases", "must contain unique values");
@@ -107,10 +111,14 @@ ValidationResult validate(const ArticleProposal& proposal) {
   for (std::size_t section_index = 0; section_index < proposal.sections.size(); ++section_index) {
     const auto& section = proposal.sections[section_index];
     const auto section_path = "/sections/" + std::to_string(section_index);
+    require(!to_string(section.key).empty(), result, section_path + "/key", "must be a supported section key");
+    // Repeated keys intentionally preserve separate, ordered sections. Every
+    // occurrence must contribute supported prose rather than an empty heading.
+    require(!section.blocks.empty(), result, section_path + "/blocks", "must contain at least one cited block");
     for (std::size_t block_index = 0; block_index < section.blocks.size(); ++block_index) {
       const auto& block = section.blocks[block_index];
       const auto block_path = section_path + "/blocks/" + std::to_string(block_index);
-      require(!block.text.empty(), result, block_path + "/text", "must not be empty");
+      require(!to_string(block.kind).empty(), result, block_path + "/kind", "must be a supported block kind");
       require(!block.citations.empty(), result, block_path + "/citations", "must contain at least one citation");
       for (std::size_t citation_index = 0; citation_index < block.citations.size(); ++citation_index) {
         append(result, validate(block.citations[citation_index]),
