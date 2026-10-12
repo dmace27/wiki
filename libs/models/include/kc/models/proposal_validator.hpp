@@ -13,6 +13,8 @@ struct ProposalGenerationRequest {
   domain::ProposalOperation operation{
       domain::ProposalOperation::create_article};
   std::optional<domain::ArticleId> article_id;
+  // Compiler-resolved slug preserves historical identity during updates.
+  std::optional<std::string> concept_slug;
   std::vector<domain::ExtractedPage> pages;
 };
 

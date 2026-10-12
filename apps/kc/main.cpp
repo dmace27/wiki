@@ -1,5 +1,6 @@
 #include "kc/compiler/compiler.hpp"
 #include "kc/domain/json.hpp"
+#include "kc/domain/path.hpp"
 #include "kc/extraction/extractor.hpp"
 #include "kc/import/source_importer.hpp"
 #include "kc/review/review_service.hpp"
@@ -347,7 +348,7 @@ nlohmann::json apply_success_json(const kc::vault::ApplyResult& result) {
        {{"apply_run_id", result.apply_run_id.value},
         {"proposal_id", result.proposal_id.value},
         {"article_id", result.article_id.value},
-        {"vault_path", result.vault_path.generic_string()},
+        {"vault_path", kc::domain::path_to_utf8(result.vault_path)},
         {"backup_path", std::move(backup_path)},
         {"content_sha256", result.content_sha256},
         {"status", "applied"}}}};
@@ -360,7 +361,7 @@ nlohmann::json search_success_json(
   for (const auto& result : results) {
     matches.push_back({{"article_id", result.article_id.value},
                        {"title", result.title},
-                       {"vault_path", result.vault_path.generic_string()},
+                       {"vault_path", kc::domain::path_to_utf8(result.vault_path)},
                        {"excerpt", result.excerpt},
                        {"relevance", result.relevance}});
   }
@@ -1283,7 +1284,7 @@ int main(const int argc, char** argv) {
         std::cout << apply_success_json(result).dump() << '\n';
       } else if (!quiet) {
         std::cout << "Applied proposal " << result.proposal_id.value << " to "
-                  << result.vault_path.generic_string() << '\n';
+                  << kc::domain::path_to_utf8(result.vault_path) << '\n';
         if (result.backup_path) {
           std::cout << "Backed up the previous article at "
                     << result.backup_path->generic_string() << '\n';
@@ -1335,7 +1336,7 @@ int main(const int argc, char** argv) {
         }
         for (const auto& result : results) {
           std::cout << result.title << "\n  "
-                    << result.vault_path.generic_string() << '\n';
+                    << kc::domain::path_to_utf8(result.vault_path) << '\n';
           if (!result.excerpt.empty()) {
             std::cout << "  " << result.excerpt << '\n';
           }

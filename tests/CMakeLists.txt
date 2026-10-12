@@ -13,6 +13,7 @@ add_executable(kc_tests
   integration/project_initializer_tests.cpp
   integration/review_service_tests.cpp
   integration/search_index_tests.cpp
+  unit/concept_identity_tests.cpp
   unit/domain_json_tests.cpp
   unit/extraction_adapter_tests.cpp
   unit/id_tests.cpp
@@ -33,6 +34,7 @@ target_link_libraries(
     kc::search
     kc::storage
     kc::vault
+    yaml-cpp::yaml-cpp
     nlohmann_json_schema_validator::validator
     kc_project_options
 )

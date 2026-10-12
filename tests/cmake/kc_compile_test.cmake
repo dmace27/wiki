@@ -33,3 +33,19 @@ endif()
 if(NOT compile_output MATCHES "\"code\":\"no_evidence\"")
   message(FATAL_ERROR "compile output omitted no_evidence: ${compile_output}")
 endif()
+
+# Portable component validation must run before evidence selection or a model
+# call, including when the CLI is executed on a non-Windows host.
+foreach(title IN ITEMS "CON" "nul.txt" "COM9" "LPT2" "Topic." "Topic?")
+  execute_process(
+    COMMAND "${KC_EXE}" --project "${KC_TEST_ROOT}" --json compile --concept "${title}"
+    RESULT_VARIABLE invalid_status
+    OUTPUT_VARIABLE invalid_output
+    ERROR_VARIABLE invalid_error
+  )
+  if(NOT invalid_status EQUAL 2 OR NOT invalid_output MATCHES "\"code\":\"invalid_concept\"")
+    message(FATAL_ERROR
+      "portable concept validation failed for ${title} (${invalid_status}): "
+      "${invalid_error} ${invalid_output}")
+  endif()
+endforeach()

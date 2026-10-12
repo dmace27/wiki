@@ -50,6 +50,17 @@ kc compile --concept "Cellular Respiration" --source src_01j...
 kc compile --concept "The French Revolution"
 ```
 
+## Concept identity
+
+Compile normalizes horizontal whitespace and Unicode NFC, resolves concepts
+with full locale-independent case folding, and preserves an applied page's
+display title, slug, and filename. Approval/apply and exact search use those
+same rules. Distinct titles sharing a slug (e.g. `A-B` and `A B`) and unsafe
+portable filenames fail with `invalid_concept` before calling the model.
+Non-English word/phrase matching supports Unicode case and normalization;
+unsegmented text, inflection, and implicit concepts may require `--source`.
+See [concept identity](CONCEPT_IDENTITY.md) for precise rules and legacy behavior.
+
 ## Source imports and revisions
 
 `kc import FILE...` creates a distinct logical source for **every input**.
@@ -114,3 +125,14 @@ status. It is refused after a proposal has cited the page because proposal
 payloads and normalized citation offsets are immutable. Proposal list/show are
 read-only, while reject changes only proposal review metadata. None of these
 review operations writes or edits a vault article.
+
+## Article metadata and generated text
+
+New articles omit inferred tags and use quoted YAML strings with `aliases: []`
+when empty. Proposal aliases seed creation; subsequent frontmatter aliases are
+user-owned, preserved on update, and read from the completed file for indexing.
+Update proposal aliases are suggestions with no effect on existing metadata.
+Invalid YAML/ambiguous aliases or changed compiler identity abort apply before
+writing. Model text renders literally; the writer supplies links and citations.
+Headings, relationships, and reserved markers are validated before proposals
+enter review. See [Markdown metadata and rendering](MARKDOWN_METADATA.md).

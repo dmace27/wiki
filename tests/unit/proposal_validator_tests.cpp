@@ -1,9 +1,11 @@
 #include "kc/domain/json.hpp"
+#include "kc/domain/markdown.hpp"
 #include "kc/models/concept.hpp"
 #include "kc/models/proposal_validator.hpp"
 #include "../test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <filesystem>
 
@@ -128,4 +130,75 @@ TEST_CASE("citation offsets are UTF-8 byte offsets") {
   // the pi character occupies two UTF-8 bytes.
   block_citation.start_char = 2;
   CHECK_FALSE(validator.validate_response(proposal, request_for(page)));
+}
+
+TEST_CASE("Markdown headings and relationship destinations fail shared validation before review") {
+  const auto field = GENERATE("heading", "related", "alias");
+  const auto text = GENERATE("", "   ", "line\nbreak", "line\rbreak", "line\u2028break");
+  auto proposal = fixture_proposal();
+  if (std::string_view(field) == "heading") {
+    proposal.sections.front().heading = text;
+  } else if (std::string_view(field) == "related") {
+    proposal.related_concepts.front().title = text;
+  } else {
+    proposal.article.aliases = {text};
+  }
+  CHECK_FALSE(kc::domain::validate(proposal));
+  kc::models::ProposalValidator validator;
+  CHECK_FALSE(validator.validate_response(proposal, request_for(fixture_page())));
+}
+
+TEST_CASE("relationship targets cannot inject wiki link aliases headings or embeds") {
+  const auto title = GENERATE("Other]] [[Fake", "Page|Fake", "Page#Section",
+                              "Page^block", "../Outside", "CON", "<img>");
+  auto proposal = fixture_proposal();
+  proposal.related_concepts.front().title = title;
+  CHECK_FALSE(kc::domain::validate(proposal));
+}
+
+TEST_CASE("reserved markers and unsafe Unicode are rejected in every proposal text position") {
+  const auto field = GENERATE("title", "alias", "heading", "block", "related", "reason", "quote");
+  const std::string text = GENERATE(std::string("<!-- kc:managed:end -->"),
+                                    std::string("A\0B", 3), std::string("\xff", 1),
+                                    std::string("A\u202eB"));
+  auto proposal = fixture_proposal();
+  const std::string_view position(field);
+  if (position == "title") proposal.article.title = text;
+  if (position == "alias") proposal.article.aliases = {text};
+  if (position == "heading") proposal.sections.front().heading = text;
+  if (position == "block") proposal.sections.front().blocks.front().text = text;
+  if (position == "related") proposal.related_concepts.front().title = text;
+  if (position == "reason") proposal.related_concepts.front().reason = text;
+  if (position == "quote") proposal.sections.front().blocks.front().citations.front().quote = text;
+  CHECK_FALSE(kc::domain::validate(proposal));
+}
+
+TEST_CASE("model markup remains literal and multiline prose remains one cited block") {
+  auto proposal = fixture_proposal();
+  proposal.sections.front().blocks.front().text =
+      "[Fake source](https://evil.test) <img src=x> ![[embed]]\n"
+      "[^fake]: injected\n    ```code```";
+  CHECK(kc::domain::validate(proposal));
+  const auto rendered = kc::domain::markdown_literal(proposal.sections.front().blocks.front().text);
+  CHECK(rendered.find('\n') == std::string::npos);
+  CHECK(rendered.find("[Fake source](") == std::string::npos);
+  CHECK(rendered.find("![[") == std::string::npos);
+  CHECK(rendered.find("[^fake]:") == std::string::npos);
+  CHECK(rendered.find("\\<img") != std::string::npos);
+  CHECK(rendered.find("```") == std::string::npos);
+  CHECK(kc::domain::markdown_literal("α\n\n  β") == "α β");
+}
+
+TEST_CASE("configured ownership marker IDs cannot inject Markdown or comment attributes") {
+  auto config = kc::domain::parse_project_config(kc::test::read_json(
+      std::filesystem::path(KC_TEST_FIXTURES_DIR) / "project-config.valid.json"));
+  REQUIRE(config);
+  for (const auto& id : {"", "quote\"", "close-->", "line\nbreak", "with space", "日本語"}) {
+    config.value->vault.generated_section_id = id;
+    CHECK_FALSE(kc::domain::validate(*config.value));
+  }
+  for (const auto& id : {"knowledge-compiler", "section_2.v1"}) {
+    config.value->vault.generated_section_id = id;
+    CHECK(kc::domain::validate(*config.value));
+  }
 }

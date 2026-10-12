@@ -1,8 +1,11 @@
 #include "kc/domain/types.hpp"
+#include "kc/domain/concept.hpp"
+#include "kc/domain/markdown.hpp"
 
 #include <algorithm>
 #include <regex>
 #include <set>
+#include <stdexcept>
 #include <string>
 
 namespace kc::domain {
@@ -52,7 +55,7 @@ ValidationResult validate(const ProjectConfig& config) {
   require(is_project_relative(config.paths.state), result, "/paths/state", "must be project-relative");
   require(is_project_relative(config.paths.cache), result, "/paths/cache", "must be project-relative");
   require(is_project_relative(config.vault.source_directory), result, "/vault/source_directory", "must be relative to the vault");
-  require(!config.vault.generated_section_id.empty(), result, "/vault/generated_section_id", "must not be empty");
+  require(safe_managed_section_id(config.vault.generated_section_id), result, "/vault/generated_section_id", "must be 1-128 ASCII letters, digits, dots, underscores, or hyphens");
   require(!config.providers.llm.default_provider.empty(), result, "/providers/llm/default", "must not be empty");
   require(!config.providers.llm.ollama.base_url.empty(), result, "/providers/llm/ollama/base_url", "must not be empty"); require(!config.providers.llm.ollama.model.empty(), result, "/providers/llm/ollama/model", "must not be empty");
   require(config.providers.llm.ollama.timeout_seconds > 0U, result, "/providers/llm/ollama/timeout_seconds", "must be positive");
@@ -84,9 +87,14 @@ ValidationResult validate(const Citation& citation) {
 ValidationResult validate(const ArticleProposal& proposal) {
   // Structural parsing has already checked JSON shapes. These checks enforce
   // semantic rules such as safe slugs, unique aliases, and cited content.
-  ValidationResult result;
+  auto result = validate_markdown(proposal);
   require(proposal.schema_version == 1U, result, "/schema_version", "must equal 1");
-  require(!proposal.article.title.empty(), result, "/article/title", "must not be empty");
+  try {
+    static_cast<void>(normalize_concept_title(proposal.article.title));
+    static_cast<void>(concept_filename(proposal.article.title));
+  } catch (const std::invalid_argument& error) {
+    require(false, result, "/article/title", error.what());
+  }
   require(std::regex_match(proposal.article.slug, std::regex("^[a-z0-9]+(?:-[a-z0-9]+)*$")),
           result, "/article/slug", "must be a lowercase kebab-case slug");
   if (proposal.article.article_id) {

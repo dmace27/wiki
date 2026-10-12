@@ -10,7 +10,7 @@ For any requested concept, evidence selection:
 - excludes failed, empty, and unreviewed OCR pages;
 - optionally restricts selection to explicit `--source` IDs;
 - ranks exact title matches above matches containing every meaningful title
-  term, with a small singular/plural fallback;
+  term using Unicode NFC/case folding, with a small ASCII singular/plural fallback;
 - treats explicitly filtered sources as curated evidence when no lexical match
   exists; and
 - orders matches by a stable relevance score, normalized source name, source
@@ -26,3 +26,8 @@ older pending or approved work for the same article.
 Invalid JSON, missing block citations, foreign page IDs, invalid byte offsets,
 and quote mismatches remain `invalid_response` model runs. None can create a
 proposal, and compilation never changes the vault.
+
+Concept lookup, pending supersession, and collision checks share the
+[concept identity contract](../../docs/CONCEPT_IDENTITY.md). The compiler resolves
+stored display spelling/slugs before calling the model and rechecks identity
+and destination ownership under the proposal publication transaction.

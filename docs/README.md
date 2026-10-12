@@ -12,6 +12,8 @@ relevant document and explain the migration.
 | [CLI contract](CLI_CONTRACT.md) | Command names, arguments, output conventions, and MVP workflow. |
 | [Data contracts](DATA_CONTRACTS.md) | IDs, JSON schemas, citation validation, and Markdown rendering format. |
 | [Source identity](SOURCE_IDENTITY.md) | New imports, explicit revisions, byte reuse, partial batches, migration, and Task 2 verification. |
+| [Markdown metadata](MARKDOWN_METADATA.md) | Domain-neutral YAML, user-owned aliases, literal content policy, and Task 4 verification. |
+| [Concept identity](CONCEPT_IDENTITY.md) | Canonical titles, Unicode matching, slug collisions, portable filenames, and Task 3 verification. |
 | [State database](STATE_DATABASE.md) | SQLite design, migration rules, and initial DDL. |
 | [Task 3 verification](TASK_3_VERIFICATION.md) | Automated end-to-end evidence and manual OCR/Obsidian test record. |
 

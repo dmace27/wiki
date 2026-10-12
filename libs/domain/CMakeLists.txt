@@ -1,7 +1,9 @@
 # The domain library owns IDs, value types, validation, and JSON conversion.
 add_library(kc_domain STATIC
+  src/concept.cpp
   src/id.cpp
   src/json.cpp
+  src/markdown.cpp
   src/types.cpp
 )
 
@@ -18,5 +20,5 @@ target_include_directories(
 target_link_libraries(
   kc_domain
   PUBLIC nlohmann_json::nlohmann_json
-  PRIVATE kc_project_options
+  PRIVATE utf8proc::utf8proc kc_project_options
 )

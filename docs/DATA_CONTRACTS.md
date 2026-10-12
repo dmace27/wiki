@@ -216,7 +216,10 @@ arbitrary operations.
 ## Markdown format
 
 The compiler owns only the content between `kc:managed` markers. The writer
-builds source footnotes itself from validated citation records.
+builds source footnotes itself from validated citation records. Text fields
+are rendered literally, with multiline prose folded into one cited block. See
+[Markdown metadata and rendering](MARKDOWN_METADATA.md) for the content policy,
+YAML string serialization, alias ownership, and final article checks.
 
 Vault source copies use the immutable name
 `<source_id>-<source_version_id>.<extension>` under the configured
@@ -227,12 +230,10 @@ source is imported.
 ```markdown
 ---
 kc_schema: 1
-article_id: art_01j...
-title: Markov Chains
+article_id: "art_01J00000000000000000000000"
+title: "Markov Chains"
 aliases:
-  - Markov chain
-tags:
-  - probability
+  - "Markov chain"
 ---
 
 # Markov Chains
@@ -241,20 +242,16 @@ tags:
 
 ## My working explanation
 
-A Markov chain describes a process that moves between states, where the next
-state depends on the current state rather than the full earlier history.
-[^pg_01j_a]
+A Markov chain moves between states\. [^pg_01j_a]
 
 ## Key ideas
 
-- **State:** the current condition of the process. [^pg_01j_a]
-- **Transition probability:** the chance of moving between states. [^pg_01j_b]
+- State\: the current condition of the process\. [^pg_01j_a]
+- Transition probability\: the chance of moving between states\. [^pg_01j_b]
 
 ## Related concepts
 
-- [[Conditional Probability]]
-- [[Random Variables]]
-- [[Random Walks]]
+- [[Conditional Probability]] — Transitions use conditional probabilities\. [^pg_01j_a]
 
 ## Sources
 

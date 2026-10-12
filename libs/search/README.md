@@ -7,6 +7,7 @@ read-only service over that committed state.
 
 Search behavior:
 
+- promotes exact NFC/full Unicode case-folded concept identity matches first;
 - searches the FTS5 `title`, `aliases`, and `body` columns;
 - requires every normalized query term and treats user punctuation as a
   separator rather than executable FTS syntax;
@@ -24,5 +25,8 @@ kc search "transition probability" --limit 5 --json
 ```
 
 An empty index is a successful search with no results. Queries without a word
-or number are rejected as invalid input, and stored absolute or parent-escaping
+or number are rejected unless they exactly identify a stored concept, and stored absolute or parent-escaping
 vault paths are rejected as corrupt state.
+
+See [concept identity](../../docs/CONCEPT_IDENTITY.md) for canonical lookup versus
+FTS token behavior, punctuation-only concept names, and Unicode language limits.

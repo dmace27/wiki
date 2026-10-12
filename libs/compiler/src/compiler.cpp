@@ -1,11 +1,13 @@
 #include "kc/compiler/compiler.hpp"
 
 #include "kc/domain/id.hpp"
+#include "kc/domain/concept.hpp"
 #include "kc/domain/json.hpp"
 #include "kc/import/sha256.hpp"
 #include "kc/models/model_runner.hpp"
 #include "kc/models/proposal_validator.hpp"
 #include "kc/storage/database.hpp"
+#include "kc/storage/concept_identity.hpp"
 
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
@@ -145,12 +147,6 @@ struct CandidatePage {
   std::size_t relevance_score{0};
 };
 
-struct ArticleTarget {
-  domain::ProposalOperation operation{
-      domain::ProposalOperation::create_article};
-  std::optional<domain::ArticleId> article_id;
-};
-
 std::string utc_now() {
   const auto now = std::chrono::system_clock::now();
   const auto time = std::chrono::system_clock::to_time_t(now);
@@ -210,48 +206,20 @@ domain::TextStatus parse_text_status(const std::string_view status) {
 /// Make title and phrase comparison stable across capitalization and common
 /// punctuation without changing the original evidence text or byte offsets.
 std::string normalize_match_text(const std::string_view text) {
-  std::string normalized;
-  normalized.reserve(text.size());
-  bool pending_space = false;
-  for (const auto character : text) {
-    const auto byte = static_cast<unsigned char>(character);
-    if (std::isalnum(byte)) {
-      if (pending_space && !normalized.empty()) {
-        normalized.push_back(' ');
-      }
-      normalized.push_back(static_cast<char>(std::tolower(byte)));
-      pending_space = false;
-    } else if (character == '+' || character == '#' || character == '&' ||
-               character == '@') {
-      if (!normalized.empty() && normalized.back() != ' ') {
-        normalized.push_back(' ');
-      }
-      switch (character) {
-        case '+':
-          normalized += "plus";
-          break;
-        case '#':
-          normalized += "sharp";
-          break;
-        case '&':
-          normalized += "and";
-          break;
-        case '@':
-          normalized += "at";
-          break;
-        default:
-          break;
-      }
-      pending_space = true;
-    } else {
-      pending_space = !normalized.empty();
-    }
+  try {
+    return domain::normalize_lexical_text(text);
+  } catch (const std::invalid_argument&) {
+    // Malformed text cannot establish lexical relevance. Explicit curation
+    // remains separate from automatic matching and extraction validation.
+    return {};
   }
-  return normalized;
 }
 
 bool contains_phrase(const std::string& normalized_text,
                      const std::string_view phrase) {
+  if (phrase.empty() || normalized_text.empty()) {
+    return false;
+  }
   const auto padded_text = " " + normalized_text + " ";
   const auto padded_phrase = " " + std::string(phrase) + " ";
   return padded_text.find(padded_phrase) != std::string::npos;
@@ -279,6 +247,11 @@ bool contains_term_variant(const std::string& normalized_text,
                            const std::string& term) {
   if (contains_phrase(normalized_text, term)) {
     return true;
+  }
+  if (!std::ranges::all_of(term, [](const char character) {
+        return character >= 'a' && character <= 'z';
+      })) {
+    return false;
   }
   // A small deterministic singular/plural fallback covers common concept
   // title differences without embedding domain-specific aliases.
@@ -542,7 +515,11 @@ class Compiler::Impl {
   }
 
   [[nodiscard]] CompileResult compile(const CompileOptions& options) {
-    auto pages = select_evidence(options);
+    validate_options(options);
+    const auto target = find_article_target(options.concept_title);
+    auto canonical_options = options;
+    canonical_options.concept_title = target.title;
+    auto pages = select_evidence(canonical_options);
     if (pages.empty()) {
       throw CompilerError(
           CompilerErrorKind::no_evidence,
@@ -551,11 +528,14 @@ class Compiler::Impl {
               "'; pass --source to compile from explicitly curated sources");
     }
 
-    const auto target = find_article_target(options.concept_title);
+    const auto operation = target.article_id
+        ? domain::ProposalOperation::update_article
+        : domain::ProposalOperation::create_article;
     models::ProposalGenerationRequest request{
-        .concept_title = options.concept_title,
-        .operation = target.operation,
+        .concept_title = target.title,
+        .operation = operation,
         .article_id = target.article_id,
+        .concept_slug = target.slug,
         .pages = std::move(pages)};
     models::ModelRunResult model_result;
     try {
@@ -594,7 +574,7 @@ class Compiler::Impl {
     return {
         .proposal_id = proposal_id,
         .model_run_id = model_result.run_id,
-        .operation = target.operation,
+        .operation = operation,
         .article_id = target.article_id,
         .selected_page_count = request.pages.size()};
   }
@@ -613,22 +593,10 @@ class Compiler::Impl {
   }
 
   static void validate_options(const CompileOptions& options) {
-    const auto normalized_title = normalize_whitespace(options.concept_title);
-    const auto unsafe_character = std::ranges::any_of(
-        options.concept_title, [](const char character) {
-          const auto byte = static_cast<unsigned char>(character);
-          constexpr std::string_view invalid_filename_characters =
-              "/\\<>:\"|?*";
-          return invalid_filename_characters.find(character) !=
-                     std::string_view::npos ||
-                 byte < 0x20U || byte == 0x7FU;
-        });
-    if (normalized_title.empty() || options.concept_title.size() > 200U ||
-        unsafe_character) {
-      throw CompilerError(
-          CompilerErrorKind::invalid_concept,
-          "concept title must be 1-200 bytes and contain no unsafe filename "
-          "or control characters");
+    try {
+      static_cast<void>(domain::normalize_concept_title(options.concept_title));
+    } catch (const std::invalid_argument& error) {
+      throw CompilerError(CompilerErrorKind::invalid_concept, error.what());
     }
     for (const auto& source_id : options.source_ids) {
       if (source_id.value.empty()) {
@@ -670,25 +638,19 @@ class Compiler::Impl {
     return result;
   }
 
-  [[nodiscard]] ArticleTarget find_article_target(
+  [[nodiscard]] storage::ConceptTarget find_article_target(
       const std::string_view concept_title) const {
     try {
       storage::Database database(state_path());
-      Statement statement(
-          database.native_handle(),
-          "SELECT article_id FROM articles WHERE title = ? COLLATE NOCASE "
-          "LIMIT 1");
-      statement.bind_text(1, concept_title);
-      if (statement.step() == SQLITE_ROW) {
-        return {
-            .operation = domain::ProposalOperation::update_article,
-            .article_id = domain::ArticleId{statement.text(0)}};
-      }
-      return {};
+      auto target = storage::resolve_concept(database.native_handle(), concept_title);
+      const auto path = target.vault_path.value_or(
+          config_.paths.vault / domain::concept_filename(target.title));
+      storage::validate_concept_destination(database.native_handle(), path, target.article_id);
+      return target;
+    } catch (const storage::ConceptIdentityError& error) {
+      throw CompilerError(CompilerErrorKind::invalid_concept, error.what());
     } catch (const storage::StorageError& error) {
-      throw CompilerError(CompilerErrorKind::state_error,
-                          "could not read article state: " +
-                              std::string(error.what()));
+      throw CompilerError(CompilerErrorKind::state_error, error.what());
     }
   }
 
@@ -750,21 +712,36 @@ class Compiler::Impl {
       storage::Database database(state_path());
       Transaction transaction(database);
 
-      // A newer proposal supersedes review work only for the same concept.
-      // The JSON title predicate prevents unrelated new concept proposals from
-      // superseding each other before either one has an article ID.
-      Statement supersede(
-          database.native_handle(),
-          article_id
-              ? "UPDATE proposals SET status = 'superseded' "
-                "WHERE article_id = ? AND status IN ('pending', 'approved')"
-              : "UPDATE proposals SET status = 'superseded' "
-                "WHERE article_id IS NULL AND operation = 'create_article' "
-                "AND json_extract(payload_json, '$.article.title') = ? "
-                "COLLATE NOCASE AND status IN ('pending', 'approved')");
-      supersede.bind_text(1, article_id ? article_id->value
-                                        : proposal.article.title);
-      static_cast<void>(supersede.step());
+      // Recheck after generation under the write lock: another compiler or
+      // apply may have claimed the identity while the model was running.
+      const auto current = storage::resolve_concept(
+          database.native_handle(), proposal.article.title);
+      storage::validate_concept_destination(database.native_handle(),
+          current.vault_path.value_or(config_.paths.vault /
+                                     domain::concept_filename(current.title)), article_id);
+      if (current.article_id != article_id ||
+          current.title != proposal.article.title ||
+          current.slug != proposal.article.slug) {
+        throw CompilerError(CompilerErrorKind::invalid_concept,
+                            "concept identity changed during generation; compile again");
+      }
+
+      if (article_id) {
+        Statement supersede(database.native_handle(),
+            "UPDATE proposals SET status = 'superseded' WHERE article_id = ? "
+            "AND status IN ('pending', 'approved')");
+        supersede.bind_text(1, article_id->value);
+        static_cast<void>(supersede.step());
+      }
+      // Use the same Unicode key for pending creates, including legacy
+      // capitalization and whitespace variants; unrelated concepts survive.
+      for (const auto& pending : current.pending_creates) {
+        Statement supersede(database.native_handle(),
+            "UPDATE proposals SET status = 'superseded' WHERE proposal_id = ? "
+            "AND status IN ('pending', 'approved')");
+        supersede.bind_text(1, pending.value);
+        static_cast<void>(supersede.step());
+      }
 
       const nlohmann::json payload = proposal;
       Statement insert(
@@ -807,6 +784,8 @@ class Compiler::Impl {
         }
       }
       transaction.commit();
+    } catch (const storage::ConceptIdentityError& error) {
+      throw CompilerError(CompilerErrorKind::invalid_concept, error.what());
     } catch (const storage::StorageError& error) {
       throw CompilerError(CompilerErrorKind::state_error,
                           "could not persist proposal: " +

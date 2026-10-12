@@ -51,3 +51,14 @@ Citation checks require the page ID to be among the supplied evidence,
 `0 <= start_char < end_char <= page.text.size()`, and the normalized page
 substring to equal `quote`. Offsets are byte offsets into the UTF-8 page text,
 matching the current C++/SQLite contract.
+
+Target title/slug validation follows the shared
+[concept identity contract](../../docs/CONCEPT_IDENTITY.md). The compiler supplies
+the stored slug for updates; new concepts use the canonical slug. The prompt
+and validator require the exact resolved display title and expected slug.
+
+Response parsing also enforces the shared
+[Markdown text policy](../../docs/MARKDOWN_METADATA.md): safe one-line headings
+and related destinations, valid Unicode, and no reserved ownership markers.
+The prompt requests plain text; the writer escapes model markup and folds
+multiline prose. Unsafe output never becomes an approvable proposal.

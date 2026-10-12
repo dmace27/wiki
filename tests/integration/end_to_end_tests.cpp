@@ -187,7 +187,7 @@ TEST_CASE("import through apply produces a searchable source-linked article") {
   const std::string markdown{std::istreambuf_iterator<char>(article),
                              std::istreambuf_iterator<char>()};
   CHECK(markdown.find("#page=1") != std::string::npos);
-  CHECK(markdown.find("Probability Notes.pdf, p. 1") != std::string::npos);
+  CHECK(markdown.find("Probability Notes\\.pdf, p. 1") != std::string::npos);
   CHECK(database.scalar_integer(
             "SELECT COUNT(*) FROM proposals WHERE status = 'applied'") == 1);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 1);

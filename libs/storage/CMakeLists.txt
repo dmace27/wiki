@@ -1,5 +1,6 @@
 # The storage library owns SQLite access, migrations, and project initialization.
 add_library(kc_storage STATIC
+  src/concept_identity.cpp
   src/database.cpp
   src/migration_runner.cpp
   src/project_initializer.cpp

@@ -141,7 +141,7 @@ LanguageModelRequest build_concept_prompt(
 
   nlohmann::json target{
       {"concept", request.concept_title},
-      {"slug", canonical_concept_slug(request.concept_title)},
+      {"slug", request.concept_slug.value_or(canonical_concept_slug(request.concept_title))},
       {"operation", domain::to_string(request.operation)}};
   if (request.article_id) {
     target["article_id"] = request.article_id->value;
@@ -165,6 +165,14 @@ LanguageModelRequest build_concept_prompt(
       "slug must exactly equal Target.slug. Adapt "
       "the explanation, key ideas, and example to the subject rather than "
       "assuming it is a mathematics topic.\n\n";
+  user_prompt +=
+      "All text fields are plain text, not Markdown or HTML. The writer "
+      "escapes markup, creates all source footnotes and related links, and "
+      "folds multiline prose into one paragraph. Headings, aliases, and "
+      "related titles must be single lines. Related titles must be portable "
+      "page names without []#|^ separators. Never include kc:managed: markers. "
+      "Aliases seed new articles only; existing frontmatter aliases are "
+      "user-owned and preserved on updates.\n\n";
   user_prompt += "Target:\n" + target.dump(2) + "\n\n";
   user_prompt += "Evidence pages:\n" + evidence.dump(2) + "\n\n";
   user_prompt +=

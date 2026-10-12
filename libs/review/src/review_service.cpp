@@ -3,6 +3,7 @@
 #include "kc/domain/json.hpp"
 #include "kc/import/sha256.hpp"
 #include "kc/storage/database.hpp"
+#include "kc/storage/concept_identity.hpp"
 
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
@@ -507,6 +508,15 @@ ProposalReview ReviewService::review_proposal(
                         "proposal does not exist: " + proposal_id.value);
     }
     auto proposal = parse_payload(proposal_row.text(7));
+    if (proposal_row.text(3) == "pending" || proposal_row.text(3) == "approved") {
+      if (proposal.article.article_id.value_or(domain::ArticleId{}).value !=
+          proposal_row.text(1)) {
+        throw ReviewError(ReviewErrorKind::state_error,
+                          "proposal article IDs do not match");
+      }
+      proposal.article = storage::resolve_proposal_identity(
+          database.native_handle(), proposal);
+    }
     ProposalReview result{
         .summary = summary_from_row(proposal_row, proposal),
         .proposal = std::move(proposal)};

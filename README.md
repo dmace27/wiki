@@ -94,7 +94,8 @@ rebuild dependencies for the new compiler ABI.
 ICU is **not** part of this baseline: SQLite enables FTS5 and default JSON1,
 without its optional `unicode` feature. The pinned SQLite port otherwise makes
 an unnecessary optional ICU lookup for static libraries; the project disables
-that lookup. This does not add Unicode case folding to SQLite's `NOCASE`.
+that lookup. Concept identity uses the manifest's utf8proc dependency for
+NFC normalization and full case folding, independently of SQLite's `NOCASE`.
 Curl must come from the manifest's CMake config package, rather than the macOS
 system SDK. CMake 3.29+ uses linker-aware archive deduplication (CMP0156), with
 first-occurrence ordering on 3.31+ (CMP0179). CMake 3.25–3.28 can still emit
@@ -167,7 +168,7 @@ proposal citation offsets and quotes remain immutable.
 
 The local model layer uses the Ollama settings in `kc.json` to request a
 schema-constrained proposal for the selected concept. It validates the exact
-requested title, its canonical slug, and all returned citations
+resolved canonical display title, its new or stored slug, and all returned citations
 against supplied page text and records a redacted `model_runs` audit entry.
 Compile relevant extracted pages into a pending proposal with:
 
@@ -182,6 +183,11 @@ one or more `--source src_01J...` options treats those sources as curated
 evidence when no lexical match exists. The compiler stores normalized citations
 transactionally and never writes vault files. Invalid model output remains only
 a redacted failed model run and cannot become a pending proposal.
+
+Case/Unicode/whitespace variants update the same concept while preserving its
+display title, slug, and filename. Slug collisions and nonportable titles fail
+before model generation. See [concept identity rules](docs/CONCEPT_IDENTITY.md)
+for Windows device names, Unicode behavior, legacy projects, and language limits.
 
 Approve a reviewed proposal, then apply it as a separate operation:
 
@@ -202,6 +208,13 @@ atomic temporary-file replacement, and updates audit/citation/search state only
 after that replacement succeeds. Existing generated articles retain every byte
 outside their `kc:managed` markers, and the complete previous file is backed up
 under `.knowledge-compiler/backups/`.
+
+New articles use quoted YAML strings, an actual empty alias list when needed,
+and no inferred tags. Aliases become user-owned after creation; updates preserve
+frontmatter and index the aliases actually stored there. Generated text renders
+literally, with the writer supplying related links and source footnotes. See
+[Markdown metadata and rendering](docs/MARKDOWN_METADATA.md) for supported text,
+legacy metadata, and validation rules.
 
 If a create proposal collides with an untracked `<Concept title>.md`, `kc apply`
 refuses to overwrite it. After reviewing that exact collision, the explicit

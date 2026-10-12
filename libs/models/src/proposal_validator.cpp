@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <regex>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -46,17 +47,6 @@ std::string normalize_whitespace(const std::string_view text) {
   return normalized;
 }
 
-bool has_unsafe_title_character(const std::string_view title) {
-  return std::ranges::any_of(title, [](const char character) {
-    const auto byte = static_cast<unsigned char>(character);
-    constexpr std::string_view invalid_filename_characters =
-        "/\\<>:\"|?*";
-    return invalid_filename_characters.find(character) !=
-               std::string_view::npos ||
-           byte < 0x20U || byte == 0x7FU;
-  });
-}
-
 using PageIndex =
     std::unordered_map<std::string, const domain::ExtractedPage*>;
 
@@ -92,13 +82,21 @@ void validate_citation(const domain::Citation& citation,
 domain::ValidationResult ProposalValidator::validate_request(
     const ProposalGenerationRequest& request) const {
   domain::ValidationResult result;
-  if (normalize_whitespace(request.concept_title).empty()) {
-    add_issue(result, "/concept", "must not be empty or whitespace-only");
-  } else if (request.concept_title.size() > 200U) {
-    add_issue(result, "/concept", "must not exceed 200 bytes");
-  } else if (has_unsafe_title_character(request.concept_title)) {
-    add_issue(result, "/concept",
-              "must not contain unsafe filename or control characters");
+  try {
+    static_cast<void>(domain::normalize_concept_title(request.concept_title));
+    static_cast<void>(domain::concept_filename(request.concept_title));
+    if (request.concept_slug &&
+        request.operation == domain::ProposalOperation::create_article &&
+        *request.concept_slug != canonical_concept_slug(request.concept_title)) {
+      add_issue(result, "/concept_slug", "must be canonical for a create request");
+    }
+  } catch (const std::invalid_argument& error) {
+    add_issue(result, "/concept", error.what());
+  }
+  if (request.concept_slug &&
+      !std::regex_match(*request.concept_slug,
+                        std::regex("^[a-z0-9]+(?:-[a-z0-9]+)*$"))) {
+    add_issue(result, "/concept_slug", "must be a lowercase kebab-case slug");
   }
   if (request.pages.empty()) {
     add_issue(result, "/pages", "must contain at least one evidence page");
@@ -154,7 +152,8 @@ domain::ValidationResult ProposalValidator::validate_response(
     add_issue(result, "/article/title",
               "must exactly match the requested concept title");
   }
-  if (proposal.article.slug != canonical_concept_slug(request.concept_title)) {
+  if (proposal.article.slug != request.concept_slug.value_or(
+          canonical_concept_slug(request.concept_title))) {
     add_issue(result, "/article/slug",
               "must equal the canonical slug for the requested concept");
   }

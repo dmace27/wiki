@@ -1,6 +1,8 @@
 #include "kc/search/search_index.hpp"
 
 #include "kc/domain/json.hpp"
+#include "kc/domain/concept.hpp"
+#include "kc/domain/path.hpp"
 #include "kc/storage/database.hpp"
 
 #include <nlohmann/json.hpp>
@@ -120,9 +122,10 @@ domain::ProjectConfig read_config(const std::filesystem::path& root) {
 std::string literal_fts_query(const std::string_view query) {
   std::vector<std::string> terms;
   std::string term;
-  for (const auto character : query) {
+  for (const auto character : domain::fold_unicode_text(query)) {
     const auto byte = static_cast<unsigned char>(character);
-    if (std::isalnum(byte) || byte >= 0x80U) {
+    if ((byte >= 'a' && byte <= 'z') ||
+        (byte >= '0' && byte <= '9') || byte >= 0x80U) {
       term.push_back(character);
     } else if (!term.empty()) {
       terms.push_back(std::move(term));
@@ -132,11 +135,6 @@ std::string literal_fts_query(const std::string_view query) {
   if (!term.empty()) {
     terms.push_back(std::move(term));
   }
-  if (terms.empty()) {
-    throw SearchError(SearchErrorKind::invalid_query,
-                      "search query must contain at least one word or number");
-  }
-
   std::string expression;
   for (const auto& value : terms) {
     if (!expression.empty()) {
@@ -172,7 +170,12 @@ std::vector<SearchResult> SearchIndex::search(
     throw SearchError(SearchErrorKind::invalid_query,
                       "search result limit must be between 1 and 100");
   }
-  const auto expression = literal_fts_query(query);
+  std::string expression;
+  try {
+    expression = literal_fts_query(query);
+  } catch (const std::invalid_argument& error) {
+    throw SearchError(SearchErrorKind::invalid_query, error.what());
+  }
 
   try {
     storage::Database database(project_root_ / config_.paths.state);
@@ -183,16 +186,19 @@ std::vector<SearchResult> SearchIndex::search(
         "bm25(article_fts, 0.0, 10.0, 5.0, 1.0) AS relevance "
         "FROM article_fts JOIN articles a "
         "ON a.article_id = article_fts.article_id "
-        "WHERE article_fts MATCH ? "
-        "ORDER BY relevance, lower(a.title), a.article_id LIMIT ?");
-    statement.bind_text(1, expression);
-    statement.bind_integer(2, static_cast<std::int64_t>(limit));
+        "WHERE article_fts MATCH ?1 AND ?2 "
+        "ORDER BY relevance, lower(a.title), a.article_id LIMIT ?3");
+    // A harmless placeholder keeps MATCH syntactically valid for concepts
+    // made entirely of punctuation; exact identity lookup handles them below.
+    statement.bind_text(1, expression.empty() ? "\"kc_empty_query\"" : expression);
+    statement.bind_integer(2, expression.empty() ? 0 : 1);
+    statement.bind_integer(3, static_cast<std::int64_t>(limit));
 
     std::vector<SearchResult> results;
     while (statement.step() == SQLITE_ROW) {
       SearchResult result{.article_id = {statement.text(0)},
                           .title = statement.text(1),
-                          .vault_path = statement.text(2),
+                          .vault_path = domain::path_from_utf8(statement.text(2)),
                           .excerpt = statement.text(3),
                           .relevance = statement.real(4)};
       if (!is_safe_relative(result.vault_path)) {
@@ -201,9 +207,64 @@ std::vector<SearchResult> SearchIndex::search(
       }
       results.push_back(std::move(result));
     }
+    // FTS5 has its own (older Unicode) token rules. Exact concept lookup uses
+    // the same NFC/full case-fold key as compile/apply, so e.g. Straße/STRASSE
+    // and composed/decomposed titles always return the canonical page first.
+    std::string identity_key;
+    try {
+      identity_key = domain::concept_identity_key(query);
+    } catch (const std::invalid_argument&) {
+      if (expression.empty()) {
+        throw SearchError(SearchErrorKind::invalid_query,
+                          "search query must contain a word, number, or exact concept title");
+      }
+      return results;  // Multi-line free-text queries still use literal FTS.
+    }
+    Statement identities(database.native_handle(),
+        "SELECT a.article_id, a.title, a.vault_path, substr(f.body, 1, 160) "
+        "FROM articles a LEFT JOIN article_fts f ON f.article_id = a.article_id "
+        "ORDER BY a.article_id");
+    std::optional<SearchResult> exact;
+    while (identities.step() == SQLITE_ROW) {
+      if (domain::concept_identity_key(identities.text(1)) != identity_key) {
+        continue;
+      }
+      if (exact) {
+        throw SearchError(SearchErrorKind::state_error,
+                          "ambiguous Unicode concept identity; curate the duplicate articles");
+      }
+      exact = SearchResult{.article_id = {identities.text(0)},
+                           .title = identities.text(1),
+                           .vault_path = domain::path_from_utf8(identities.text(2)),
+                           .excerpt = identities.text(3),
+                           .relevance = 0.0};
+      if (!is_safe_relative(exact->vault_path)) {
+        throw SearchError(SearchErrorKind::state_error,
+                          "article search returned an unsafe vault path");
+      }
+    }
+    if (expression.empty() && !exact) {
+      throw SearchError(SearchErrorKind::invalid_query,
+                        "search query must contain a word, number, or exact concept title");
+    }
+    if (exact) {
+      const auto existing = std::ranges::find_if(results, [&](const auto& result) {
+        return result.article_id == exact->article_id;
+      });
+      if (existing != results.end()) {
+        *exact = *existing;  // Keep the FTS excerpt and score when available.
+        results.erase(existing);
+      }
+      results.insert(results.begin(), std::move(*exact));
+      if (results.size() > limit) {
+        results.resize(limit);
+      }
+    }
     return results;
   } catch (const SearchError&) {
     throw;
+  } catch (const std::invalid_argument& error) {
+    throw SearchError(SearchErrorKind::state_error, error.what());
   } catch (const storage::StorageError& error) {
     throw SearchError(SearchErrorKind::state_error,
                       "could not query article index: " +

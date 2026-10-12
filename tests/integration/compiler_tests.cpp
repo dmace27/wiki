@@ -1,4 +1,6 @@
 #include "kc/compiler/compiler.hpp"
+#include "kc/domain/concept.hpp"
+#include "kc/search/search_index.hpp"
 #include "kc/extraction/extractor.hpp"
 #include "kc/import/source_importer.hpp"
 #include "kc/models/language_model.hpp"
@@ -9,9 +11,12 @@
 #include "../test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <nlohmann/json.hpp>
+#include <yaml-cpp/yaml.h>
 
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -37,6 +42,7 @@ void write_file(const std::filesystem::path& path,
 struct ModelState {
   std::string response;
   std::vector<std::string> prompts;
+  std::function<void()> during_generation;
 };
 
 /// A deterministic local model double that still passes through ModelRunner's
@@ -57,6 +63,9 @@ class StaticLanguageModel final : public kc::models::LanguageModel {
   [[nodiscard]] kc::models::LanguageModelResponse generate(
       const kc::models::LanguageModelRequest& request) override {
     state_->prompts.push_back(request.user_prompt);
+    if (state_->during_generation) {
+      state_->during_generation();
+    }
     return {.content = state_->response};
   }
 
@@ -452,4 +461,364 @@ TEST_CASE("pending create proposals are superseded per concept") {
   CHECK(database.scalar_integer(
             "SELECT COUNT(*) FROM proposals WHERE status = 'superseded'") ==
         0);
+}
+
+TEST_CASE("canonical concept requests preserve identity through compile apply and search") {
+  struct Variant {
+    std::string title;
+    std::string request;
+  };
+  const auto variant = GENERATE(
+      Variant{"Photosynthesis", " \tphotosynthesis  "},
+      Variant{"Café", " CAFE\u0301 "},
+      Variant{"Straße", "STRASSE"},
+      Variant{"Биология", "БИОЛОГИЯ"},
+      Variant{"量子力学", "量子力学"},
+      Variant{"!!!", " !!! "});
+  INFO(variant.title);
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(project_root));
+  const auto imported = import_and_extract(
+      project_root, temporary.path() / "notes.md",
+      "A Markov chain supports a fixture about " + variant.title + ".\n");
+  kc::storage::Database database(initialized.state_path);
+  const auto page_id = database.scalar_text("SELECT page_id FROM source_pages");
+  auto state = std::make_shared<ModelState>();
+  const auto slug = kc::domain::canonical_concept_slug(variant.title);
+  state->response = create_proposal(page_id, 14U, variant.title, slug).dump();
+  kc::compiler::Compiler compiler(project_root, std::make_unique<StaticLanguageModel>(state));
+  const auto first = compiler.compile({.concept_title = "  " + variant.title + "\t",
+                                      .source_ids = {imported.source.source_id}});
+  kc::vault::VaultWriter writer(project_root);
+  writer.approve(first.proposal_id);
+  const auto created = writer.apply(first.proposal_id);
+  const auto original_path = created.vault_path;
+  const auto original_title = database.scalar_text("SELECT title FROM articles");
+  const auto original_slug = database.scalar_text("SELECT slug FROM articles");
+  REQUIRE(original_title == variant.title);
+
+  auto update = create_proposal(page_id, 14U, variant.title, slug);
+  update["operation"] = "update_article";
+  update["article"]["article_id"] = created.article_id.value;
+  state->response = update.dump();
+  const auto second = compiler.compile({.concept_title = variant.request,
+                                       .source_ids = {imported.source.source_id}});
+  CHECK(second.operation == kc::domain::ProposalOperation::update_article);
+  CHECK(second.article_id == created.article_id);
+  kc::review::ReviewService review(project_root);
+  CHECK(review.review_proposal(second.proposal_id).proposal.article.title == original_title);
+  writer.approve(second.proposal_id);
+  const auto updated = writer.apply(second.proposal_id);
+  CHECK(updated.article_id == created.article_id);
+  CHECK(updated.vault_path == original_path);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM articles") == 1);
+  CHECK(database.scalar_text("SELECT title FROM articles") == original_title);
+  CHECK(database.scalar_text("SELECT slug FROM articles") == original_slug);
+  CHECK(database.scalar_text("SELECT title FROM article_fts") == original_title);
+  kc::search::SearchIndex search(project_root);
+  const auto results = search.search(variant.request);
+  REQUIRE(results.size() == 1U);
+  CHECK(results.front().article_id == created.article_id);
+  CHECK(results.front().title == original_title);
+  CHECK(results.front().vault_path == original_path);
+}
+
+TEST_CASE("pending creates share canonical Unicode identity without superseding other concepts") {
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(project_root));
+  const auto imported = import_and_extract(project_root, temporary.path() / "notes.md",
+      "A Markov chain supports a fixture about Café and Biology.\n");
+  kc::storage::Database database(initialized.state_path);
+  const auto page_id = database.scalar_text("SELECT page_id FROM source_pages");
+  auto state = std::make_shared<ModelState>();
+  kc::compiler::Compiler compiler(project_root, std::make_unique<StaticLanguageModel>(state));
+  state->response = create_proposal(page_id, 14U, "Café", "caf").dump();
+  const auto first = compiler.compile({.concept_title = "Cafe\u0301"});
+  kc::vault::VaultWriter writer(project_root);
+  writer.approve(first.proposal_id);
+  state->response = create_proposal(page_id, 14U, "Biology", "biology").dump();
+  const auto unrelated = compiler.compile({.concept_title = "Biology"});
+  state->response = create_proposal(page_id, 14U, "Café", "caf").dump();
+  const auto second = compiler.compile({.concept_title = "\tCAFÉ "});
+  CHECK(second.operation == kc::domain::ProposalOperation::create_article);
+  kc::review::ReviewService review(project_root);
+  CHECK(review.review_proposal(first.proposal_id).summary.status == kc::domain::ProposalStatus::superseded);
+  CHECK(review.review_proposal(unrelated.proposal_id).summary.status == kc::domain::ProposalStatus::pending);
+  CHECK(review.review_proposal(second.proposal_id).proposal.article.title == "Café");
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals WHERE status = 'pending'") == 2);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals WHERE status = 'superseded'") == 1);
+  static_cast<void>(imported);
+}
+
+TEST_CASE("distinct-title slug collisions fail before model generation") {
+  const bool apply_first = GENERATE(false, true);
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(project_root));
+  const auto imported = import_and_extract(project_root, temporary.path() / "notes.md",
+      "A Markov chain supports a fixture about A-B and A B.\n");
+  kc::storage::Database database(initialized.state_path);
+  auto state = std::make_shared<ModelState>();
+  state->response = create_proposal(database.scalar_text("SELECT page_id FROM source_pages"),
+                                    14U, "A-B", "a-b").dump();
+  kc::compiler::Compiler compiler(project_root, std::make_unique<StaticLanguageModel>(state));
+  const auto first = compiler.compile({.concept_title = "A-B"});
+  if (apply_first) {
+    kc::vault::VaultWriter writer(project_root);
+    writer.approve(first.proposal_id);
+    static_cast<void>(writer.apply(first.proposal_id));
+  }
+  try {
+    static_cast<void>(compiler.compile({.concept_title = "A B"}));
+    FAIL("expected a pre-generation collision diagnostic");
+  } catch (const kc::compiler::CompilerError& error) {
+    CHECK(error.kind() == kc::compiler::CompilerErrorKind::invalid_concept);
+    CHECK(std::string(error.what()).find("slug collision") != std::string::npos);
+    CHECK(std::string(error.what()).find("A-B") != std::string::npos);
+  }
+  CHECK(state->prompts.size() == 1U);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM model_runs") == 1);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals") == 1);
+  // A more specific identity is accepted without touching the first proposal.
+  state->response = create_proposal(database.scalar_text("SELECT page_id FROM source_pages"),
+                                    14U, "A B Theory", "a-b-theory").dump();
+  const auto distinct = compiler.compile({.concept_title = "A B Theory",
+                                        .source_ids = {imported.source.source_id}});
+  CHECK(distinct.proposal_id != first.proposal_id);
+}
+
+TEST_CASE("portable title errors are rejected before evidence and model use") {
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(project_root));
+  auto state = std::make_shared<ModelState>();
+  kc::compiler::Compiler compiler(project_root, std::make_unique<StaticLanguageModel>(state));
+  for (const auto& title : {"CON", "nul.txt", "COM9", "LPT²", "Topic.", "Topic?", "a\nb"}) {
+    try {
+      static_cast<void>(compiler.compile({.concept_title = title}));
+      FAIL("expected portable concept validation");
+    } catch (const kc::compiler::CompilerError& error) {
+      CHECK(error.kind() == kc::compiler::CompilerErrorKind::invalid_concept);
+    }
+  }
+  kc::storage::Database database(initialized.state_path);
+  CHECK(state->prompts.empty());
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM model_runs") == 0);
+}
+
+TEST_CASE("non-English automatic evidence matching is Unicode aware and bounded") {
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  static_cast<void>(kc::storage::initialize_project(init_options(project_root)));
+  const auto accented = import_and_extract(project_root, temporary.path() / "notes-a.md",
+                                           "Cafe\u0301 and its history.\n");
+  const auto cyrillic = import_and_extract(project_root, temporary.path() / "notes-b.md",
+                                          "БИОЛОГИЯ изучает жизнь.\n");
+  const auto cjk = import_and_extract(project_root, temporary.path() / "notes-c.md",
+                                     "这里讨论量子力学现象\n");
+  static_cast<void>(import_and_extract(project_root, temporary.path() / "---.md", "---\n"));
+  auto state = std::make_shared<ModelState>();
+  kc::compiler::Compiler compiler(project_root, std::make_unique<StaticLanguageModel>(state));
+  const auto french = compiler.select_evidence({.concept_title = "CAFÉ"});
+  REQUIRE(french.size() == 1U);
+  CHECK(french.front().source_version_id == accented.version.source_version_id);
+  const auto russian = compiler.select_evidence({.concept_title = "биология"});
+  REQUIRE(russian.size() == 1U);
+  CHECK(russian.front().source_version_id == cyrillic.version.source_version_id);
+  // There is no dictionary-based segmentation or transliteration. A title
+  // embedded in an unbroken CJK sentence needs explicit source curation.
+  CHECK(compiler.select_evidence({.concept_title = "量子力学"}).empty());
+  const auto curated = compiler.select_evidence({.concept_title = "量子力学",
+                                                .source_ids = {cjk.source.source_id}});
+  REQUIRE(curated.size() == 1U);
+  CHECK(curated.front().source_version_id == cjk.version.source_version_id);
+  CHECK(compiler.select_evidence({.concept_title = "!!!"}).empty());
+  try {
+    static_cast<void>(compiler.compile({.concept_title = "量子力学"}));
+    FAIL("expected a curation diagnostic");
+  } catch (const kc::compiler::CompilerError& error) {
+    CHECK(error.kind() == kc::compiler::CompilerErrorKind::no_evidence);
+    CHECK(std::string(error.what()).find("--source") != std::string::npos);
+  }
+  CHECK(state->prompts.empty());
+}
+
+TEST_CASE("identity collisions introduced during generation cannot publish a proposal") {
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(project_root));
+  static_cast<void>(import_and_extract(project_root, temporary.path() / "notes.md",
+                                       "A Markov chain supports A B.\n"));
+  kc::storage::Database database(initialized.state_path);
+  auto state = std::make_shared<ModelState>();
+  state->response = create_proposal(database.scalar_text("SELECT page_id FROM source_pages"),
+                                    14U, "A B", "a-b").dump();
+  state->during_generation = [&database] {
+    database.execute("INSERT INTO articles(article_id,title,slug,vault_path,created_at,updated_at) "
+                     "VALUES ('art_01J00000000000000000000000','A-B','a-b','vault/A-B.md','t','t')");
+  };
+  kc::compiler::Compiler compiler(project_root, std::make_unique<StaticLanguageModel>(state));
+  CHECK_THROWS_AS(compiler.compile({.concept_title = "A B"}), kc::compiler::CompilerError);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals") == 0);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM articles") == 1);
+}
+
+TEST_CASE("Unicode legacy articles retain their original slug and destination") {
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(project_root));
+  const auto imported = import_and_extract(project_root, temporary.path() / "notes.md",
+                                           "A Markov chain supports Биология.\n");
+  kc::storage::Database database(initialized.state_path);
+  // A pre-task-3 opaque slug and custom vault path must not be regenerated.
+  database.execute("INSERT INTO articles(article_id,title,slug,vault_path,created_at,updated_at) "
+                   "VALUES ('art_01J00000000000000000000000','Биология','concept-legacy',"
+                   "'vault/Original.md','t','t')");
+  // Use the project's actual ownership marker rather than a fixture assumption.
+  auto config = kc::test::read_json(project_root / "kc.json");
+  write_file(project_root / "vault" / "Original.md",
+      "---\nkc_schema: 1\narticle_id: art_01J00000000000000000000000\n"
+      "title: Биология\naliases: []\n---\n# Биология\n\n<!-- kc:managed:start id=\"" +
+      config["vault"]["generated_section_id"].get<std::string>() +
+      "\" -->\nold\n<!-- kc:managed:end -->\n");
+  auto state = std::make_shared<ModelState>();
+  auto payload = create_proposal(database.scalar_text("SELECT page_id FROM source_pages"),
+                                  14U, "Биология", "concept-legacy");
+  payload["operation"] = "update_article";
+  payload["article"]["article_id"] = "art_01J00000000000000000000000";
+  state->response = payload.dump();
+  kc::compiler::Compiler compiler(project_root, std::make_unique<StaticLanguageModel>(state));
+  const auto compiled = compiler.compile({.concept_title = "БИОЛОГИЯ"});
+  kc::vault::VaultWriter writer(project_root);
+  writer.approve(compiled.proposal_id);
+  CHECK(writer.apply(compiled.proposal_id).vault_path == "vault/Original.md");
+  CHECK(database.scalar_text("SELECT slug FROM articles") == "concept-legacy");
+  static_cast<void>(imported);
+}
+
+TEST_CASE("ambiguous legacy Unicode identities require curation before generation or search") {
+  kc::test::TemporaryDirectory temporary;
+  const auto project_root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(project_root));
+  kc::storage::Database database(initialized.state_path);
+  // SQLite NOCASE permitted these two articles under the previous rules.
+  database.execute("INSERT INTO articles(article_id,title,slug,vault_path,created_at,updated_at) VALUES "
+                   "('art_01J00000000000000000000000','Straße','strasse','vault/Straße.md','t','t'),"
+                   "('art_01J00000000000000000000001','STRASSE','strasse-old','vault/STRASSE.md','t','t')");
+  auto state = std::make_shared<ModelState>();
+  kc::compiler::Compiler compiler(project_root, std::make_unique<StaticLanguageModel>(state));
+  try {
+    static_cast<void>(compiler.compile({.concept_title = "strasse"}));
+    FAIL("expected an ambiguous identity error");
+  } catch (const kc::compiler::CompilerError& error) {
+    CHECK(std::string(error.what()).find("ambiguous Unicode") != std::string::npos);
+  }
+  CHECK(state->prompts.empty());
+  kc::search::SearchIndex search(project_root);
+  CHECK_THROWS_AS(search.search("strasse"), kc::search::SearchError);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM articles") == 2);
+}
+
+TEST_CASE("biology history and programming articles create and update with consistent YAML and aliases") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  auto state = std::make_shared<ModelState>();
+  kc::compiler::Compiler compiler(root, std::make_unique<StaticLanguageModel>(state));
+  kc::vault::VaultWriter writer(root);
+  kc::search::SearchIndex search(root);
+  struct Topic {
+    std::string title;
+    std::string explanation;
+    std::string related;
+  };
+  const std::vector<Topic> topics{
+      {"Photosynthesis", "Photosynthesis converts light to chemical energy.", "Chlorophyll"},
+      {"Silk Road", "The Silk Road connected trading communities.", "Trade"},
+      {"Recursion", "Recursion invokes a function from within itself.", "Call Stack"}};
+  for (const auto& topic : topics) {
+    CAPTURE(topic.title);
+    const auto imported = import_and_extract(root, temporary.path() / (topic.title + ".md"),
+                                             topic.explanation);
+    const kc::compiler::CompileOptions options{.concept_title = topic.title,
+                                              .source_ids = {imported.source.source_id}};
+    const auto page = compiler.select_evidence(options).front();
+    auto payload = create_proposal(page.page_id.value, page.text.size(), topic.title,
+                                   kc::domain::canonical_concept_slug(topic.title));
+    const nlohmann::json citation{{"page_id", page.page_id.value}, {"start_char", 0},
+                                  {"end_char", page.text.size()}, {"quote", page.text}};
+    payload["sections"][0]["blocks"][0]["text"] = topic.explanation;
+    payload["sections"][0]["blocks"][0]["citations"] = nlohmann::json::array({citation});
+    payload["related_concepts"][0]["title"] = topic.related;
+    payload["related_concepts"][0]["reason"] = "Connected in these notes.";
+    payload["related_concepts"][0]["citations"] = nlohmann::json::array({citation});
+    payload["article"]["aliases"] = nlohmann::json::array({"InitialAlias", "光合成"});
+    state->response = payload.dump();
+    const auto proposed = compiler.compile(options);
+    writer.approve(proposed.proposal_id);
+    const auto created = writer.apply(proposed.proposal_id);
+    const auto path = root / created.vault_path;
+    std::ifstream input(path);
+    std::string content{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    const auto frontmatter_end = content.find("\n---\n", 4);
+    REQUIRE(frontmatter_end != std::string::npos);
+    auto metadata = YAML::Load(content.substr(4, frontmatter_end - 4));
+    CHECK(metadata["title"].Scalar() == topic.title);
+    CHECK(metadata["aliases"].IsSequence());
+    CHECK(metadata["aliases"][1].Scalar() == "光合成");
+    CHECK_FALSE(metadata["tags"]);
+
+    // User ownership begins after creation. Model suggestions in the update
+    // must not silently change either Obsidian aliases or CLI search aliases.
+    const auto alias_start = content.find("aliases:");
+    content.replace(alias_start, frontmatter_end - alias_start,
+                    "aliases: [\"UserAlias\", \"新しい別名\"]\ncustom: keep");
+    write_file(path, content);
+    payload["operation"] = "update_article";
+    payload["article"]["article_id"] = created.article_id.value;
+    payload["article"]["aliases"] = nlohmann::json::array({"ModelSuggestion"});
+    payload["sections"][0]["blocks"][0]["text"] = topic.explanation + " Updated explanation.";
+    state->response = payload.dump();
+    const auto update = compiler.compile(options);
+    writer.approve(update.proposal_id);
+    const auto applied = writer.apply(update.proposal_id);
+    CHECK(applied.article_id == created.article_id);
+    std::ifstream updated_input(path);
+    const std::string updated{std::istreambuf_iterator<char>(updated_input),
+                              std::istreambuf_iterator<char>()};
+    CHECK(updated.substr(0, updated.find("\n---\n", 4)) ==
+          content.substr(0, content.find("\n---\n", 4)));
+    metadata = YAML::Load(updated.substr(4, updated.find("\n---\n", 4) - 4));
+    CHECK(metadata["aliases"][0].Scalar() == "UserAlias");
+    CHECK(metadata["custom"].Scalar() == "keep");
+    CHECK(database.scalar_text("SELECT aliases FROM article_fts WHERE article_id = '" +
+                               created.article_id.value + "'") == "UserAlias\n新しい別名");
+    CHECK_FALSE(search.search("UserAlias").empty());
+    CHECK(search.search("ModelSuggestion").empty());
+    CHECK(search.search("InitialAlias").empty());
+  }
+}
+
+TEST_CASE("unrenderable generated proposals never reach pending review") {
+  const auto field = GENERATE("heading", "related", "marker");
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  static_cast<void>(import_and_extract(root, temporary.path() / "notes.md",
+                                       "A Markov chain has the Markov property."));
+  kc::storage::Database database(initialized.state_path);
+  auto payload = create_proposal(database.scalar_text("SELECT page_id FROM source_pages"));
+  if (std::string_view(field) == "heading") payload["sections"][0]["heading"] = "Heading\nSources";
+  if (std::string_view(field) == "related") payload["related_concepts"][0]["title"] = "Target|Misleading";
+  if (std::string_view(field) == "marker") payload["article"]["aliases"] = {"<!-- kc:managed:end -->"};
+  auto state = std::make_shared<ModelState>();
+  state->response = payload.dump();
+  kc::compiler::Compiler compiler(root, std::make_unique<StaticLanguageModel>(state));
+  CHECK_THROWS_AS(compiler.compile({.concept_title = "Markov Chains"}), kc::compiler::CompilerError);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals") == 0);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM model_runs WHERE status = 'invalid_response'") == 1);
+  CHECK(std::filesystem::is_empty(root / "vault"));
 }

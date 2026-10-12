@@ -42,6 +42,8 @@ find_package(CLI11 CONFIG REQUIRED)
 # Its imported target also carries the correct static-library dependencies.
 find_package(CURL CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(utf8proc CONFIG REQUIRED)
+find_package(yaml-cpp CONFIG REQUIRED)
 # The pinned sqlite3 port probes ICU for every static build, even without its
 # unicode feature. Our manifest uses FTS5 and JSON1 only; ICU is not a dependency.
 set(CMAKE_DISABLE_FIND_PACKAGE_ICU ON)

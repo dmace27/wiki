@@ -20,6 +20,7 @@ target_link_libraries(
     kc::import
     kc::storage
     nlohmann_json::nlohmann_json
+    yaml-cpp::yaml-cpp
     unofficial::sqlite3::sqlite3
     kc_project_options
 )

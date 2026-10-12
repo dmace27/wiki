@@ -1,12 +1,17 @@
 #include "kc/vault/vault_writer.hpp"
 
 #include "kc/domain/id.hpp"
+#include "kc/domain/concept.hpp"
+#include "kc/domain/path.hpp"
 #include "kc/domain/json.hpp"
+#include "kc/domain/markdown.hpp"
 #include "kc/import/sha256.hpp"
 #include "kc/storage/database.hpp"
+#include "kc/storage/concept_identity.hpp"
 
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
+#include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <cctype>
@@ -15,6 +20,7 @@
 #include <fstream>
 #include <iomanip>
 #include <optional>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <string>
@@ -323,7 +329,7 @@ std::optional<ArticleRecord> load_article(sqlite3 *connection,
   return ArticleRecord{.article_id = {statement.text(0)},
                        .title = statement.text(1),
                        .slug = statement.text(2),
-                       .vault_path = statement.text(3)};
+                       .vault_path = domain::path_from_utf8(statement.text(3))};
 }
 
 std::string normalize_whitespace(const std::string_view text) {
@@ -366,7 +372,7 @@ std::string citation_key(const std::string_view section_key,
 }
 
 std::filesystem::path source_vault_filename(const SourceReference &source) {
-  auto extension = std::filesystem::path(source.original_filename).extension();
+  auto extension = domain::path_from_utf8(source.original_filename).extension();
   if (extension.empty()) {
     switch (source.source_kind) {
     case domain::SourceKind::pdf:
@@ -381,8 +387,9 @@ std::filesystem::path source_vault_filename(const SourceReference &source) {
     }
   }
   // Both IDs make the destination immutable across later source versions.
-  return source.source_id.value + "-" + source.source_version_id.value +
-         extension.string();
+  return domain::path_from_utf8(source.source_id.value + "-" +
+                               source.source_version_id.value +
+                               domain::path_to_utf8(extension));
 }
 
 CitationState load_citation_state(sqlite3 *connection,
@@ -482,39 +489,6 @@ void validate_normalized_citations(const ProposalRecord &proposal,
   }
 }
 
-bool has_line_break(const std::string_view value) {
-  return value.find('\n') != std::string_view::npos ||
-         value.find('\r') != std::string_view::npos;
-}
-
-/// Reserved managed markers must never be model-controlled text. Without this
-/// check a proposal could make later ownership parsing ambiguous.
-void validate_renderable_text(const ProposalRecord &record,
-                              const std::string_view start_marker,
-                              const std::string_view end_marker) {
-  const auto payload = nlohmann::json(record.proposal).dump();
-  if (payload.find("<!-- kc:managed:") != std::string::npos ||
-      payload.find(start_marker) != std::string::npos ||
-      payload.find(end_marker) != std::string::npos) {
-    throw VaultError(VaultErrorKind::validation_failed,
-                     "proposal text contains a reserved managed marker");
-  }
-  for (const auto &section : record.proposal.sections) {
-    if (section.heading.empty() || has_line_break(section.heading)) {
-      throw VaultError(VaultErrorKind::validation_failed,
-                       "proposal section headings must be one non-empty line");
-    }
-  }
-  for (const auto &related : record.proposal.related_concepts) {
-    if (related.title.empty() || has_line_break(related.title) ||
-        related.title.find("[[") != std::string::npos ||
-        related.title.find("]]") != std::string::npos) {
-      throw VaultError(VaultErrorKind::validation_failed,
-                       "related concept titles must be safe wiki-link text");
-    }
-  }
-}
-
 std::string
 citation_references(const std::vector<domain::Citation> &citations) {
   std::string rendered;
@@ -527,25 +501,14 @@ citation_references(const std::vector<domain::Citation> &citations) {
   return rendered;
 }
 
-std::string escape_markdown_label(const std::string_view label) {
-  std::string escaped;
-  escaped.reserve(label.size());
-  for (const auto character : label) {
-    if (character == '\\' || character == '[' || character == ']') {
-      escaped.push_back('\\');
-    }
-    escaped.push_back(character);
-  }
-  return escaped;
-}
-
 std::string encode_markdown_url(const std::string_view value) {
   constexpr std::string_view hexadecimal = "0123456789ABCDEF";
   std::string encoded;
   encoded.reserve(value.size());
   for (const auto character : value) {
     const auto byte = static_cast<unsigned char>(character);
-    if (std::isalnum(byte) || character == '/' || character == '-' ||
+    if (((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
+         (byte >= '0' && byte <= '9')) || character == '/' || character == '-' ||
         character == '_' || character == '.' || character == '~') {
       encoded.push_back(character);
     } else {
@@ -557,14 +520,112 @@ std::string encode_markdown_url(const std::string_view value) {
   return encoded;
 }
 
+/// JSON double-quoted strings are YAML-compatible and retain string types,
+/// including empty, boolean-looking, null-looking, and numeric-looking values.
 std::string yaml_scalar(const std::string &value) {
-  const auto plain =
-      !value.empty() && std::ranges::all_of(value, [](const char character) {
-        const auto byte = static_cast<unsigned char>(character);
-        return std::isalnum(byte) || character == ' ' || character == '.' ||
-               character == '-' || character == '\'';
-      });
-  return plain ? value : nlohmann::json(value).dump();
+  return nlohmann::json(value).dump();
+}
+
+/// yaml-cpp exposes an implicit scalar's bytes without resolving its type.
+/// Recognize YAML 1.1/1.2 ambiguous scalars so metadata readers cannot disagree
+/// with the string-valued search index. Quoted or explicitly !!str values are
+/// always strings; ordinary legacy plain aliases remain supported.
+bool yaml_string(const YAML::Node& value) {
+  if (!value.IsScalar()) {
+    return false;
+  }
+  if (value.Tag() == "!" || value.Tag() == "tag:yaml.org,2002:str") {
+    return true;
+  }
+  if (value.Tag() != "?") {
+    return false;
+  }
+  static const std::regex typed(
+      R"(^([~]|null|true|false|yes|no|on|off|[-+]?(0[xob][0-9a-f_]+|[0-9][0-9_]*(:[0-5]?[0-9])+(\.[0-9_]*)?|([0-9][0-9_]*(\.[0-9_]*)?|\.[0-9_]+)(e[-+]?[0-9]+)?|\.(inf|nan))|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}.*)$)",
+      std::regex::icase);
+  return !value.Scalar().empty() && !std::regex_match(value.Scalar(), typed);
+}
+
+/// Read effective user-owned aliases from the final article, without rewriting
+/// frontmatter. Legacy `aliases:` null is treated as an empty list. Ambiguous
+/// YAML or changed compiler identity aborts before filesystem/state publication.
+std::vector<std::string> article_aliases(const std::string& content,
+                                        const domain::ArticleId& article_id,
+                                        const std::string& title) {
+  try {
+    std::istringstream input(content);
+    std::string line;
+    const auto next_line = [&]() {
+      if (!std::getline(input, line)) {
+        return false;
+      }
+      if (line.ends_with('\r')) {
+        line.pop_back();
+      }
+      return true;
+    };
+    if (!next_line() || line != "---") {
+      throw std::invalid_argument("article must begin with YAML frontmatter");
+    }
+    std::string yaml;
+    bool closed = false;
+    while (next_line()) {
+      if (line == "---") {
+        closed = true;
+        break;
+      }
+      yaml += line + "\n";
+    }
+    if (!closed) {
+      throw std::invalid_argument("article frontmatter is not closed");
+    }
+    const auto documents = YAML::LoadAll(yaml);
+    if (documents.size() != 1U || !documents.front().IsMap()) {
+      throw std::invalid_argument("article frontmatter must be one YAML mapping");
+    }
+    const auto metadata = documents.front();
+    std::unordered_set<std::string> keys;
+    for (const auto& entry : metadata) {
+      if (!entry.first.IsScalar() || entry.first.Scalar() == "<<" ||
+          !keys.insert(entry.first.Scalar()).second) {
+        throw std::invalid_argument("article frontmatter keys must be unique scalars");
+      }
+    }
+    if (metadata["kc_schema"].as<int>() != 1 ||
+        !yaml_string(metadata["article_id"]) ||
+        metadata["article_id"].Scalar() != article_id.value ||
+        !yaml_string(metadata["title"]) || metadata["title"].Scalar() != title) {
+      throw std::invalid_argument("compiler-owned frontmatter identity has changed");
+    }
+    std::vector<std::string> aliases;
+    const auto values = metadata["aliases"];
+    if (!values || values.IsNull()) {
+      return aliases;
+    }
+    if (!values.IsSequence()) {
+      throw std::invalid_argument("aliases must be a YAML list of scalar values");
+    }
+    for (const auto& value : values) {
+      if (!yaml_string(value)) {
+        throw std::invalid_argument("aliases must be YAML strings; quote boolean, null, numeric, or date-like values");
+      }
+      // YAML scalar bytes, rather than proposal aliases, determine the index.
+      // Validate Unicode and line structure using the same metadata policy.
+      domain::ArticleProposal descriptor;
+      descriptor.article.title = title;
+      descriptor.article.aliases = {value.Scalar()};
+      if (!domain::validate_markdown(descriptor)) {
+        throw std::invalid_argument("aliases must contain safe single-line text");
+      }
+      aliases.push_back(value.Scalar());
+    }
+    return aliases;
+  } catch (const YAML::Exception& error) {
+    throw VaultError(VaultErrorKind::validation_failed,
+                     "invalid article frontmatter: " + std::string(error.what()));
+  } catch (const std::invalid_argument& error) {
+    throw VaultError(VaultErrorKind::validation_failed, error.what());
+  }
 }
 
 std::string render_managed_content(const domain::ArticleProposal &proposal,
@@ -573,12 +634,12 @@ std::string render_managed_content(const domain::ArticleProposal &proposal,
   bool rendered_related_section = false;
 
   for (const auto &section : proposal.sections) {
-    output << "## " << section.heading << "\n\n";
+    output << "## " << domain::markdown_literal(section.heading) << "\n\n";
     for (const auto &block : section.blocks) {
       if (block.kind == domain::BlockKind::bullet) {
         output << "- ";
       }
-      output << block.text << citation_references(block.citations) << "\n\n";
+      output << domain::markdown_literal(block.text) << citation_references(block.citations) << "\n\n";
     }
 
     if (section.key == domain::SectionKey::related_concepts) {
@@ -586,7 +647,7 @@ std::string render_managed_content(const domain::ArticleProposal &proposal,
       for (const auto &related : proposal.related_concepts) {
         output << "- [[" << related.title << "]]";
         if (!related.reason.empty()) {
-          output << " — " << related.reason;
+          output << " — " << domain::markdown_literal(related.reason);
         }
         output << citation_references(related.citations) << "\n";
       }
@@ -601,7 +662,7 @@ std::string render_managed_content(const domain::ArticleProposal &proposal,
     for (const auto &related : proposal.related_concepts) {
       output << "- [[" << related.title << "]]";
       if (!related.reason.empty()) {
-        output << " — " << related.reason;
+        output << " — " << domain::markdown_literal(related.reason);
       }
       output << citation_references(related.citations) << "\n";
     }
@@ -630,12 +691,12 @@ std::string render_managed_content(const domain::ArticleProposal &proposal,
                        "proposal citation has no source metadata: " + page_id);
     }
     const auto &source = found->second;
-    auto label = escape_markdown_label(source.display_name);
+    auto label = domain::markdown_literal(source.display_name);
     if (source.source_kind == domain::SourceKind::pdf) {
       label += ", p. " + std::to_string(source.page_number);
     }
     auto target =
-        encode_markdown_url(source.vault_source_path.generic_string());
+        encode_markdown_url(domain::path_to_utf8(source.vault_source_path));
     if (source.source_kind == domain::SourceKind::pdf) {
       target += "#page=" + std::to_string(source.page_number);
     }
@@ -657,16 +718,14 @@ std::string render_new_article(const domain::ArticleProposal &proposal,
   std::ostringstream output;
   output << "---\n"
          << "kc_schema: 1\n"
-         << "article_id: " << article_id.value << "\n"
+         << "article_id: " << yaml_scalar(article_id.value) << "\n"
          << "title: " << yaml_scalar(proposal.article.title) << "\n"
-         << "aliases:\n";
+         << (proposal.article.aliases.empty() ? "aliases: []\n" : "aliases:\n");
   for (const auto &alias : proposal.article.aliases) {
     output << "  - " << yaml_scalar(alias) << "\n";
   }
-  output << "tags:\n"
-         << "  - probability\n"
-         << "---\n\n"
-         << "# " << proposal.article.title << "\n\n"
+  output << "---\n\n"
+         << "# " << domain::markdown_literal(proposal.article.title) << "\n\n"
          << start_marker << "\n\n"
          << managed_content << "\n\n"
          << end_marker << "\n";
@@ -719,6 +778,54 @@ std::string read_file(const std::filesystem::path &path) {
   return content;
 }
 
+/// Check ownership on the final artifact as well as on incoming fields. A user
+/// prefix/suffix must not introduce an extra ownership marker. Generated text
+/// and source labels are escaped; the managed region must equal that rendering.
+void validate_rendered_article(const std::string& content,
+                               const std::string_view start_marker,
+                               const std::string_view end_marker,
+                               const std::string& managed_content) {
+  const auto start = content.find(start_marker);
+  const auto end = content.find(end_marker);
+  if (start == std::string::npos || end == std::string::npos || end <= start ||
+      content.substr(start + start_marker.size(),
+                     end - start - start_marker.size()) !=
+          "\n\n" + managed_content + "\n\n") {
+    throw VaultError(VaultErrorKind::validation_failed,
+                     "rendered article has invalid ownership boundaries");
+  }
+  // Count the reserved namespace, including markers with a different ID, so
+  // injected user/source/model markup cannot change ownership interpretation.
+  const auto first = content.find("kc:managed:");
+  const auto second = content.find("kc:managed:", first + 1U);
+  if (first != start + 5U || second != end + 5U ||
+      content.find("kc:managed:", second + 1U) != std::string::npos) {
+    throw VaultError(VaultErrorKind::validation_failed,
+                     "rendered article contains additional reserved markers");
+  }
+  // A user footnote outside the managed region must not shadow a generated
+  // source reference. Other user Markdown stays untouched.
+  std::unordered_set<std::string> source_ids;
+  std::istringstream generated(managed_content);
+  std::string line;
+  const std::regex definition(R"(^ {0,3}\[\^(pg_[0-9A-HJKMNP-TV-Z]{26})\]:)");
+  std::smatch match;
+  while (std::getline(generated, line)) {
+    if (std::regex_search(line, match, definition)) {
+      source_ids.insert(match[1].str());
+    }
+  }
+  std::unordered_set<std::string> seen;
+  std::istringstream article(content);
+  while (std::getline(article, line)) {
+    if (std::regex_search(line, match, definition) &&
+        source_ids.contains(match[1].str()) && !seen.insert(match[1].str()).second) {
+      throw VaultError(VaultErrorKind::validation_failed,
+                       "user footnote shadows a generated source reference");
+    }
+  }
+}
+
 /// Replace `destination` with a complete sibling temporary file.
 ///
 /// POSIX rename replaces an existing destination atomically. The C++
@@ -744,9 +851,8 @@ void replace_with_temporary_file(const std::filesystem::path &temporary,
 /// Write a complete sibling and atomically replace the destination with it.
 void atomic_write(const std::filesystem::path &path,
                   const std::string_view content) {
-  const auto temporary =
-      path.parent_path() /
-      (path.filename().string() + ".tmp-" + domain::generate_prefixed_ulid(""));
+  auto temporary = path;
+  temporary += ".tmp-" + domain::generate_prefixed_ulid("");
   try {
     {
       std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
@@ -801,9 +907,8 @@ void copy_source(const std::filesystem::path &project_root,
     return;
   }
 
-  const auto temporary =
-      destination.parent_path() / (destination.filename().string() + ".tmp-" +
-                                   domain::generate_prefixed_ulid(""));
+  auto temporary = destination;
+  temporary += ".tmp-" + domain::generate_prefixed_ulid("");
   try {
     std::filesystem::copy_file(retained, temporary);
     if (source_import::sha256_file(temporary) != source.source_sha256) {
@@ -842,7 +947,8 @@ void persist_success(storage::Database &database, const ProposalRecord &record,
                      const std::optional<domain::Sha256> &previous_sha256,
                      const domain::Sha256 &new_sha256,
                      const std::optional<std::filesystem::path> &backup_path,
-                     const std::string &rendered_content) {
+                     const std::string &rendered_content,
+                     const std::vector<std::string>& effective_aliases) {
   const auto timestamp = utc_now();
 
   if (record.operation == domain::ProposalOperation::create_article) {
@@ -853,7 +959,7 @@ void persist_success(storage::Database &database, const ProposalRecord &record,
     insert.bind_text(1, article_id.value);
     insert.bind_text(2, record.proposal.article.title);
     insert.bind_text(3, record.proposal.article.slug);
-    insert.bind_text(4, vault_path.generic_string());
+    insert.bind_text(4, domain::path_to_utf8(vault_path));
     insert.bind_text(5, new_sha256);
     insert.bind_text(6, timestamp);
     insert.bind_text(7, timestamp);
@@ -931,7 +1037,7 @@ void persist_success(storage::Database &database, const ProposalRecord &record,
   static_cast<void>(delete_index.step());
 
   std::string aliases;
-  for (const auto &alias : record.proposal.article.aliases) {
+  for (const auto &alias : effective_aliases) {
     if (!aliases.empty()) {
       aliases.push_back('\n');
     }
@@ -946,6 +1052,56 @@ void persist_success(storage::Database &database, const ProposalRecord &record,
   insert_index.bind_text(3, aliases);
   insert_index.bind_text(4, rendered_content);
   static_cast<void>(insert_index.step());
+}
+
+/// Approval and apply share the same identity checks. Canonicalize only the
+/// effective update descriptor; immutable legacy proposal payloads stay intact.
+void resolve_identity(sqlite3* connection, ProposalRecord& record) {
+  if (record.article_id != record.proposal.article.article_id) {
+    throw VaultError(VaultErrorKind::validation_failed,
+                     "proposal article IDs do not match");
+  }
+  try {
+    static_cast<void>(storage::resolve_concept(
+        connection, record.proposal.article.title));
+    record.proposal.article = storage::resolve_proposal_identity(
+        connection, record.proposal);
+  } catch (const storage::StorageError& error) {
+    throw VaultError(VaultErrorKind::validation_failed, error.what());
+  }
+}
+
+/// On case-sensitive filesystems, refuse sibling names that would alias the
+/// destination on macOS/Windows. Existing aliases of the same physical file
+/// are safe, including macOS's decomposed Unicode directory entries.
+void validate_portable_destination(const std::filesystem::path& destination) {
+  if (!std::filesystem::is_directory(destination.parent_path())) {
+    return;
+  }
+  const auto utf8_name = destination.filename().u8string();
+  const auto key = domain::concept_identity_key(std::string_view(
+      reinterpret_cast<const char*>(utf8_name.data()), utf8_name.size()));
+  for (const auto& entry : std::filesystem::directory_iterator(destination.parent_path())) {
+    const auto sibling = entry.path().filename().u8string();
+    std::string sibling_key;
+    try {
+      sibling_key = domain::concept_identity_key(std::string_view(
+          reinterpret_cast<const char*>(sibling.data()), sibling.size()));
+      // Windows ignores trailing ASCII spaces/dots in ordinary filenames.
+      while (!sibling_key.empty() &&
+             (sibling_key.back() == ' ' || sibling_key.back() == '.')) {
+        sibling_key.pop_back();
+      }
+    } catch (const std::invalid_argument&) {
+      continue;  // An unrelated non-UTF-8 user filename cannot alias this title.
+    }
+    if (sibling_key == key && entry.path() != destination &&
+        (!std::filesystem::exists(destination) ||
+         !std::filesystem::equivalent(entry.path(), destination))) {
+      throw VaultError(VaultErrorKind::unsafe_write,
+                       "article filename collides under portable Unicode/case rules");
+    }
+  }
 }
 
 } // namespace
@@ -965,9 +1121,7 @@ VaultWriter::VaultWriter(std::filesystem::path project_root)
     throw VaultError(VaultErrorKind::invalid_project,
                      "configured vault is missing or escapes the project");
   }
-  if (config_.vault.generated_section_id.find('"') != std::string::npos ||
-      config_.vault.generated_section_id.find("-->") != std::string::npos ||
-      has_line_break(config_.vault.generated_section_id)) {
+  if (!domain::safe_managed_section_id(config_.vault.generated_section_id)) {
     throw VaultError(VaultErrorKind::invalid_project,
                      "generated section ID is not safe for a Markdown marker");
   }
@@ -976,7 +1130,13 @@ VaultWriter::VaultWriter(std::filesystem::path project_root)
 void VaultWriter::approve(const domain::ProposalId &proposal_id) {
   try {
     storage::Database database(project_root_ / config_.paths.state);
-    static_cast<void>(load_proposal(database.native_handle(), proposal_id));
+    Transaction transaction(database);
+    auto record = load_proposal(database.native_handle(), proposal_id);
+    if (record.status != "pending") {
+      throw VaultError(VaultErrorKind::invalid_proposal_state,
+                       "only a pending proposal can be approved");
+    }
+    resolve_identity(database.native_handle(), record);
     Statement statement(
         database.native_handle(),
         "UPDATE proposals SET status = 'approved', reviewed_at = ? "
@@ -988,6 +1148,7 @@ void VaultWriter::approve(const domain::ProposalId &proposal_id) {
       throw VaultError(VaultErrorKind::invalid_proposal_state,
                        "only a pending proposal can be approved");
     }
+    transaction.commit();
   } catch (const storage::StorageError &error) {
     throw VaultError(VaultErrorKind::state_error,
                      "could not approve proposal: " +
@@ -1003,16 +1164,17 @@ ApplyResult VaultWriter::apply(const domain::ProposalId &proposal_id,
     // durable state publication. A second process cannot race the same
     // approved proposal and later roll back over the first process's result.
     Transaction application_transaction(database);
-    const auto record = load_proposal(database.native_handle(), proposal_id);
+    auto record = load_proposal(database.native_handle(), proposal_id);
     if (record.status != "approved") {
       throw VaultError(VaultErrorKind::invalid_proposal_state,
                        "only an approved proposal can be applied");
     }
 
+    resolve_identity(database.native_handle(), record);
+
     const auto start_marker = "<!-- kc:managed:start id=\"" +
                               config_.vault.generated_section_id + "\" -->";
     constexpr std::string_view end_marker = "<!-- kc:managed:end -->";
-    validate_renderable_text(record, start_marker, end_marker);
 
     std::optional<ArticleRecord> existing_article;
     domain::ArticleId article_id;
@@ -1040,13 +1202,7 @@ ApplyResult VaultWriter::apply(const domain::ProposalId &proposal_id,
       article_id = *record.article_id;
     }
 
-    const auto candidate_filename = record.proposal.article.title + ".md";
-    const auto candidate_path = std::filesystem::path(candidate_filename);
-    if (candidate_path.filename() != candidate_path ||
-        candidate_filename == ".md" || has_line_break(candidate_filename)) {
-      throw VaultError(VaultErrorKind::validation_failed,
-                       "article title is not a safe vault filename");
-    }
+    const auto candidate_path = domain::concept_filename(record.proposal.article.title);
     const auto relative_vault_path = existing_article
                                          ? existing_article->vault_path
                                          : config_.paths.vault / candidate_path;
@@ -1055,8 +1211,15 @@ ApplyResult VaultWriter::apply(const domain::ProposalId &proposal_id,
                        "article path is not project-relative");
     }
 
+    try {
+      storage::validate_concept_destination(database.native_handle(), relative_vault_path, article_id);
+    } catch (const storage::StorageError& error) {
+      throw VaultError(VaultErrorKind::validation_failed, error.what());
+    }
+
     const auto vault_root = project_root_ / config_.paths.vault;
     const auto article_path = project_root_ / relative_vault_path;
+    validate_portable_destination(article_path);
     if (!is_within(vault_root, article_path) ||
         std::filesystem::is_symlink(article_path)) {
       throw VaultError(VaultErrorKind::unsafe_write,
@@ -1098,6 +1261,13 @@ ApplyResult VaultWriter::apply(const domain::ProposalId &proposal_id,
                              end_marker, managed_content);
     }
 
+    // Check the completed article before copying sources, making backups, or
+    // publishing state. User metadata remains byte-identical on updates.
+    const auto effective_aliases = article_aliases(
+        rendered_content, article_id, record.proposal.article.title);
+    validate_rendered_article(rendered_content, start_marker, end_marker,
+                              managed_content);
+
     // All cited sources are verified and copied before the article can expose
     // links to them. Version IDs prevent later imports from changing a target.
     for (const auto &[unused_page_id, source] : citation_state.pages) {
@@ -1119,7 +1289,7 @@ ApplyResult VaultWriter::apply(const domain::ProposalId &proposal_id,
     try {
       persist_success(database, record, article_id, relative_vault_path,
                       apply_run_id, previous_sha256, new_sha256, backup_path,
-                      rendered_content);
+                      rendered_content, effective_aliases);
       application_transaction.commit();
     } catch (...) {
       // Restore filesystem state if the post-write database transaction cannot

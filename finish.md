@@ -75,24 +75,60 @@ for previously merged inputs. Development and ASan/UBSan suites each passed
 
 **Confirmed writer reproduction:** an applied `Photosynthesis` article plus a valid update titled `photosynthesis` is approved, then rejected at apply with exit 5: `update proposal does not match its stored article`. The compiler's case-insensitive lookup selects precisely this update path.
 
-- [ ] Resolve requests to an existing canonical identity and retain its display title and filename. Make identity checks agree across all stages.
-- [ ] Define collision handling: titles such as `A-B` and `A B` share a slug, so a second concept currently reaches a database uniqueness failure during apply. Detect collisions before invoking the model or produce a deterministic disambiguated identity through a documented migration.
-- [ ] Define whitespace normalization and portable filename rules, including Windows reserved names, trailing spaces/dots, and Unicode normalization/case behavior. Validate them at compile time, not only at filesystem write time.
-- [ ] Fix or explicitly bound Unicode lexical matching. Compiler matching drops non-ASCII bytes, even though non-Latin titles receive supported hash slugs. Empty normalized phrases can match empty normalized page text. SQLite's current NOCASE identity does not supply general Unicode case folding.
+- [x] Resolve requests to an existing canonical identity and retain its display title and filename. Make identity checks agree across all stages.
+- [x] Define collision handling: titles such as `A-B` and `A B` share a slug, so a second concept currently reaches a database uniqueness failure during apply. Detect collisions before invoking the model or produce a deterministic disambiguated identity through a documented migration.
+- [x] Define whitespace normalization and portable filename rules, including Windows reserved names, trailing spaces/dots, and Unicode normalization/case behavior. Validate them at compile time, not only at filesystem write time.
+- [x] Fix or explicitly bound Unicode lexical matching. Compiler matching drops non-ASCII bytes, even though non-Latin titles receive supported hash slugs. Empty normalized phrases can match empty normalized page text. SQLite's current NOCASE identity does not supply general Unicode case folding.
 
 **Tests / done when:** case-only requests update the same page; safe distinct concepts cannot collide unexpectedly; non-English automatic matching either works within stated language support or explains when curation is needed; filenames are portable across every advertised OS.
+
+**Completed October 12, 2026:** Shared UTF-8/NFC/full Unicode case-folding
+rules now resolve applied and pending concept identities before generation.
+Compile, review, approval, apply, and exact search retain canonical display
+spelling; applied IDs, historical slugs, and filenames remain stable. Distinct
+slug collisions are rejected before model invocation and rechecked during
+publication/apply. Portable filename validation includes Windows device names,
+trailing dots/spaces, control characters, and explicit UTF-8/native-path
+conversion. Unicode lexical matching retains non-Latin text, excludes empty
+matches, and documents when `--source` curation is needed. Tracked destination
+ownership and portable sibling aliases are protected. No schema migration or
+automatic merge is required; ambiguous legacy Unicode identities receive a
+curation diagnostic. [Concept identity rules and verification](docs/CONCEPT_IDENTITY.md)
+document the policy and compatibility behavior. Development and ASan/UBSan
+(warnings-as-errors) suites each passed **82/82 tests**; all three presets
+configured with the pinned utf8proc dependency, the release build passed, and
+the release CLI compile/portable-title smoke check passed. Native verification
+remains macOS arm64, the currently advertised target.
 
 ### 4. Repair generic Markdown metadata and rendering — P0
 
 **Evidence:** `libs/vault/src/vault_writer.cpp`, especially `render_new_article`, `yaml_scalar`, and `persist_success`.
 
-- [ ] Remove the hard-coded `probability` tag. Omit unsupported tags or add an explicit subject-neutral metadata contract. Applying a biology proposal currently creates `tags: [probability]`.
-- [ ] Serialize YAML strings safely. The plain-scalar heuristic permits values such as `true`, `null`, or numeric strings that a YAML reader can interpret as non-string types. Emit empty aliases as an actual empty list rather than a null field.
-- [ ] Define alias ownership on update. Updates preserve old frontmatter byte-for-byte while FTS uses the new proposal's aliases, so Obsidian metadata and CLI search can disagree. Preserve user ownership while making compiler-owned metadata consistent.
-- [ ] Validate rendered headings, relationships, and reserved markers before a proposal becomes approvable. Current renderability checks happen in apply, allowing proposals that cannot be written to enter review state.
-- [ ] Establish a content policy for model-generated Markdown links, raw HTML, embedded content, and multiline blocks. Check final rendered articles so injected markup cannot create misleading source references or ownership markers.
+- [x] Remove the hard-coded `probability` tag. Omit unsupported tags or add an explicit subject-neutral metadata contract. Applying a biology proposal currently creates `tags: [probability]`.
+- [x] Serialize YAML strings safely. The plain-scalar heuristic permits values such as `true`, `null`, or numeric strings that a YAML reader can interpret as non-string types. Emit empty aliases as an actual empty list rather than a null field.
+- [x] Define alias ownership on update. Updates preserve old frontmatter byte-for-byte while FTS uses the new proposal's aliases, so Obsidian metadata and CLI search can disagree. Preserve user ownership while making compiler-owned metadata consistent.
+- [x] Validate rendered headings, relationships, and reserved markers before a proposal becomes approvable. Current renderability checks happen in apply, allowing proposals that cannot be written to enter review state.
+- [x] Establish a content policy for model-generated Markdown links, raw HTML, embedded content, and multiline blocks. Check final rendered articles so injected markup cannot create misleading source references or ownership markers.
 
 **Tests / done when:** create and update articles in biology, history, and programming; parse frontmatter with a YAML parser; check aliases, Unicode, scalar-looking titles, malicious markers, and source-link escaping. The output must be domain-neutral and metadata-consistent.
+
+**Completed October 12, 2026:** New articles omit inferred tags, quote every
+YAML string, and emit `aliases: []` when empty. Aliases become user-owned after
+creation; updates preserve frontmatter and use parsed final aliases for FTS.
+Compiler identity metadata is checked before writing. Shared domain validation
+rejects unsafe headings, related-page destinations, Unicode, and reserved
+markers during generation/parsing/review/approval/apply. Model prose and source
+labels render as escaped literal text; multiline prose is folded into one cited
+block. The writer alone creates links/footnotes, percent-encodes UTF-8 source
+paths, and checks final ownership boundaries and shadowed source footnotes.
+[Markdown metadata policy and verification](docs/MARKDOWN_METADATA.md) documents
+ownership, legacy behavior, supported content, and the pinned YAML parser.
+Actual deterministic create/update journeys cover biology, history, and
+programming, with YAML parsing and alias/search checks. Development and
+ASan/UBSan (warnings-as-errors) suites each passed **95/95 tests**; the release
+build and CLI initialization/approval/apply-routing smoke checks passed. Native
+verification remains macOS arm64; real-model and interactive Obsidian evaluation
+remain outside this task.
 
 ### 5. Enforce the JSON contracts without numeric coercion — P0
 

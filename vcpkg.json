@@ -9,6 +9,8 @@
     "curl",
     "json-schema-validator",
     "nlohmann-json",
+    "utf8proc",
+    "yaml-cpp",
     {
       "name": "sqlite3",
       "features": ["fts5"]
