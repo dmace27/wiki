@@ -121,9 +121,23 @@ Import Markdown, text, or PDF sources from the project directory (or pass
 ./build/dev/apps/kc/kc import "./Probability Notes Week 8.pdf"
 ```
 
-Each import is SHA-256 hashed and copied into immutable project-local storage.
-Re-importing unchanged bytes is idempotent; changed content creates a new source
-version without overwriting the earlier retained file.
+Each normal import creates a **new logical source**, even for the same filename
+or identical bytes. SHA-256 deduplication reuses immutable project-local bytes
+without merging source identities. Keep the returned source ID to explicitly
+revise that document:
+
+```bash
+./build/dev/apps/kc/kc import --source src_01J... "./Updated Notes.pdf"
+```
+
+Explicit revisions preserve the source's display name and kind. Repeating its
+current bytes is idempotent; changed bytes create a new latest version. Returning
+to historical bytes also creates a new latest version and preserves all old
+citations. Multi-file imports continue after individual failures and report
+all successes and errors, returning a nonzero exit code if any file fails.
+For existing projects, run `kc init` once to apply migration 003 before importing
+with this version. See [source identity rules](docs/SOURCE_IDENTITY.md) for
+renames, shared storage, batch JSON, and migration details.
 
 Extract the latest immutable version using the source ID returned by import:
 

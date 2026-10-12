@@ -11,6 +11,7 @@ relevant document and explain the migration.
 | [Implementation plan](MVP_IMPLEMENTATION_PLAN.md) | Task order, ownership, dependencies, and acceptance criteria. |
 | [CLI contract](CLI_CONTRACT.md) | Command names, arguments, output conventions, and MVP workflow. |
 | [Data contracts](DATA_CONTRACTS.md) | IDs, JSON schemas, citation validation, and Markdown rendering format. |
+| [Source identity](SOURCE_IDENTITY.md) | New imports, explicit revisions, byte reuse, partial batches, migration, and Task 2 verification. |
 | [State database](STATE_DATABASE.md) | SQLite design, migration rules, and initial DDL. |
 | [Task 3 verification](TASK_3_VERIFICATION.md) | Automated end-to-end evidence and manual OCR/Obsidian test record. |
 

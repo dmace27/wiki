@@ -103,7 +103,9 @@ capability.
 
 - Use project-relative paths only in JSON and SQLite.
 - Keep original imported files immutable after import. A changed file creates a
-  new source version.
+  new source version. New imports always create distinct source IDs; revisions
+  require an explicit source ID. Hash deduplication shares retained bytes without
+  merging logical identities (see [source identity rules](SOURCE_IDENTITY.md)).
 - Never store API keys in project files, SQLite, proposals, or logs.
 - Redact authorization headers and secrets from diagnostics.
 - Use temporary files plus atomic rename when applying a Markdown change.

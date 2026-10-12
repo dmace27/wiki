@@ -51,11 +51,23 @@ Follow the numbering as the recommended completion order. P0 means a correctness
 
 **Confirmed reproduction:** import `semester-a/Notes.md` and `semester-b/Notes.md` with different contents. Both imports return the same source ID. The second input becomes the latest version, so the first semester's notes disappear from future automatic evidence selection.
 
-- [ ] Separate “import a new logical source” from “add a revision to this source.” Give updates an explicit source ID or another stable, portable identity; basename alone must not imply a revision.
-- [ ] Keep byte deduplication, but define its relationship to logical identity. Global hash uniqueness currently returns the original source even for a renamed input or a historical version re-import; decide how aliases, revisions, and activation work without silently losing user intent.
-- [ ] Return clear import results for new source, new revision, deduplication, and partial multi-file success. `import_files` commits each file independently, but an exception currently hides earlier successful results.
+- [x] Separate “import a new logical source” from “add a revision to this source.” Give updates an explicit source ID or another stable, portable identity; basename alone must not imply a revision.
+- [x] Keep byte deduplication, but define its relationship to logical identity. Global hash uniqueness currently returns the original source even for a renamed input or a historical version re-import; decide how aliases, revisions, and activation work without silently losing user intent.
+- [x] Return clear import results for new source, new revision, deduplication, and partial multi-file success. `import_files` commits each file independently, but an exception currently hides earlier successful results.
 
 **Tests / done when:** unrelated equal-basename notes remain independently selectable; intentional revisions remain idempotent; retained historical citations work; renames, identical bytes, A→B→A content, and a batch with one failed file have documented outcomes.
+
+**Completed October 12, 2026:** Normal imports now create distinct logical
+source IDs; `kc import --source SOURCE_ID FILE` explicitly appends revisions.
+Global SHA-256 reuse shares immutable retained bytes without merging identities.
+Current-byte revisions are idempotent; A→B→A creates a new latest revision while
+preserving historical evidence and citations. Ordered per-file batch results
+report committed successes and failures in human and JSON output. Migration 003
+preserves version IDs, ordering, paths, pages, extraction runs, and citations.
+[Source identity rules and verification](docs/SOURCE_IDENTITY.md) document
+renames, aliases, shared bytes, activation, retry/upgrade behavior, and recovery
+for previously merged inputs. Development and ASan/UBSan suites each passed
+65/65 tests; the release build and import CLI regression passed.
 
 ### 3. Make concept identity consistent across compile, apply, search, and platforms — P0
 

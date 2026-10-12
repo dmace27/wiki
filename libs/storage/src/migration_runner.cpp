@@ -137,13 +137,22 @@ MigrationResult MigrationRunner::apply_all() {
       continue;
     }
 
-    database_.execute("BEGIN IMMEDIATE;");
+    // SQLite table reconstruction requires foreign keys disabled before the
+    // transaction. Validate all references before publication and restore
+    // enforcement on both success and failure.
+    database_.execute("PRAGMA foreign_keys = OFF;");
     try {
+      database_.execute("BEGIN IMMEDIATE;");
       // The schema change and its history row commit together. This prevents a
       // half-applied migration from being mistaken for a successful one.
       database_.execute(read_file(migration.path));
+      if (database_.scalar_integer(
+              "SELECT COUNT(*) FROM pragma_foreign_key_check;") != 0) {
+        throw StorageError("migration would break foreign-key references");
+      }
       record_migration(database_, migration.version);
       database_.execute("COMMIT;");
+      database_.execute("PRAGMA foreign_keys = ON;");
       result.applied_versions.push_back(migration.version);
       applied.insert(migration.version);
     } catch (...) {
@@ -152,6 +161,7 @@ MigrationResult MigrationRunner::apply_all() {
       } catch (...) {
         // Preserve the original migration error; a rollback error is secondary.
       }
+      database_.execute("PRAGMA foreign_keys = ON;");
       throw;
     }
   }

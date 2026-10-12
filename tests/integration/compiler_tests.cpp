@@ -2,8 +2,10 @@
 #include "kc/extraction/extractor.hpp"
 #include "kc/import/source_importer.hpp"
 #include "kc/models/language_model.hpp"
+#include "kc/review/review_service.hpp"
 #include "kc/storage/database.hpp"
 #include "kc/storage/project_initializer.hpp"
+#include "kc/vault/vault_writer.hpp"
 #include "../test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -102,10 +104,11 @@ nlohmann::json create_proposal(const std::string& page_id,
 kc::source_import::ImportResult import_and_extract(
     const std::filesystem::path& project_root,
     const std::filesystem::path& source_path,
-    const std::string_view content) {
+    const std::string_view content,
+    const kc::source_import::ImportOptions& options = {}) {
   write_file(source_path, content);
   kc::source_import::SourceImporter importer(project_root);
-  auto imported = importer.import_file(source_path);
+  auto imported = importer.import_file(source_path, options);
   kc::extraction::Extractor extractor(project_root);
   static_cast<void>(extractor.extract(imported.source.source_id));
   return imported;
@@ -131,12 +134,13 @@ TEST_CASE("compiler evidence selection is relevant, latest-only, and determinist
 
   // Only the latest immutable version of a logical source may be selected.
   const auto changing_path = temporary.path() / "Changing Notes.md";
+  const auto changing = import_and_extract(
+      project_root, changing_path,
+      "A Markov chain appeared only in the old revision.\n");
   static_cast<void>(import_and_extract(
       project_root, changing_path,
-      "A Markov chain appeared only in the old revision.\n"));
-  static_cast<void>(import_and_extract(
-      project_root, changing_path,
-      "The current revision discusses unrelated combinatorics.\n"));
+      "The current revision discusses unrelated combinatorics.\n",
+      {.source_id = changing.source.source_id}));
 
   auto state = std::make_shared<ModelState>();
   kc::compiler::Compiler compiler(
@@ -160,6 +164,80 @@ TEST_CASE("compiler evidence selection is relevant, latest-only, and determinist
           {.concept_title = "Markov Chains",
            .source_ids = {{"src_01J99999999999999999999999"}}}),
       kc::compiler::CompilerError);
+}
+
+TEST_CASE("equal-basename sources remain selectable through revisions and historical citations") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  const auto semester_a = temporary.path() / "semester-a" / "Notes.md";
+  const auto semester_b = temporary.path() / "semester-b" / "Notes.md";
+  const auto semester_c = temporary.path() / "semester-c" / "Notes.md";
+  std::filesystem::create_directories(semester_a.parent_path());
+  std::filesystem::create_directories(semester_b.parent_path());
+  std::filesystem::create_directories(semester_c.parent_path());
+  const auto a = import_and_extract(root, semester_a,
+                                    "A Markov chain describes semester A.\n");
+  const auto b = import_and_extract(root, semester_b,
+                                    "A Markov chain describes semester B.\n");
+  const auto c = import_and_extract(root, semester_c,
+                                    "A Markov chain describes semester A.\n");
+  CHECK(a.source.source_id != b.source.source_id);
+  CHECK(a.source.source_id != c.source.source_id);
+  CHECK(c.deduplicated);
+  CHECK(c.version.stored_path == a.version.stored_path);
+
+  auto state = std::make_shared<ModelState>();
+  kc::compiler::Compiler compiler(root, std::make_unique<StaticLanguageModel>(state));
+  const auto all = compiler.select_evidence({.concept_title = "Markov Chains"});
+  REQUIRE(all.size() == 3U);
+  for (const auto& source : {a, b, c}) {
+    const auto selected = compiler.select_evidence(
+        {.concept_title = "Markov Chains", .source_ids = {source.source.source_id}});
+    REQUIRE(selected.size() == 1U);
+    CHECK(selected.front().source_version_id == source.version.source_version_id);
+  }
+
+  // Generate a real validated proposal before changing the source. Its exact
+  // historical page remains reviewable and applicable after A -> B -> A.
+  const auto old_page = compiler.select_evidence(
+      {.concept_title = "Markov Chains", .source_ids = {a.source.source_id}}).front();
+  state->response = create_proposal(old_page.page_id.value).dump();
+  const auto proposal = compiler.compile(
+      {.concept_title = "Markov Chains", .source_ids = {a.source.source_id}});
+  const kc::source_import::ImportOptions revision{.source_id = a.source.source_id};
+  const auto changed = import_and_extract(root, semester_a,
+      "A Markov chain describes semester B.\n", revision);
+  CHECK(changed.source.source_id == a.source.source_id);
+  CHECK(changed.version_created);
+  CHECK(changed.deduplicated);
+  CHECK(changed.version.stored_path == b.version.stored_path);
+  const auto restored = import_and_extract(root, semester_a,
+      "A Markov chain describes semester A.\n", revision);
+  CHECK(restored.restored);
+  CHECK(restored.version.source_version_id != a.version.source_version_id);
+  const auto current = compiler.select_evidence(
+      {.concept_title = "Markov Chains", .source_ids = {a.source.source_id}});
+  REQUIRE(current.size() == 1U);
+  CHECK(current.front().source_version_id == restored.version.source_version_id);
+  CHECK(current.front().page_id != old_page.page_id);
+  kc::review::ReviewService review(root);
+  CHECK(review.review_extraction(a.source.source_id).source_version_id ==
+        restored.version.source_version_id);
+  const auto historical = review.review_proposal(proposal.proposal_id);
+  REQUIRE_FALSE(historical.citation_evidence.empty());
+  CHECK(historical.citation_evidence.front().source_version_id == a.version.source_version_id);
+  CHECK(historical.citation_evidence.front().extracted_text == old_page.text);
+  kc::vault::VaultWriter writer(root);
+  writer.approve(proposal.proposal_id);
+  const auto applied = writer.apply(proposal.proposal_id);
+  kc::storage::Database database(initialized.state_path);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM article_citations") == 2);
+  CHECK(database.scalar_text(
+      "SELECT p.source_version_id FROM article_citations c "
+      "JOIN source_pages p ON p.page_id = c.page_id LIMIT 1") == a.version.source_version_id.value);
+  CHECK(std::filesystem::is_regular_file(root / changed.version.stored_path));
+  CHECK(std::filesystem::is_regular_file(root / applied.vault_path));
 }
 
 TEST_CASE("evidence selection supports arbitrary and curated concepts") {

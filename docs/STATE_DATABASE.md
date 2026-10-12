@@ -8,7 +8,9 @@ review state, audit history, and the local keyword index.
 
 - Enable `PRAGMA foreign_keys = ON` for every connection.
 - Enable WAL mode during database initialization.
-- Run each migration inside a transaction.
+- Run each migration inside a transaction. For table reconstruction, the runner
+  temporarily disables foreign keys before the transaction, checks every
+  reference before commit, and restores enforcement on success or failure.
 - Do not alter an applied migration; create the next numbered migration.
 - Store file paths relative to the project root.
 - Keep page images and source files on disk; store their relative paths in
@@ -35,6 +37,14 @@ review state, audit history, and the local keyword index.
 Migration `002_proposal_review_reason.sql` adds nullable
 `proposals.review_reason`. It stores an optional reviewer explanation for a
 rejection without changing the immutable proposal payload.
+
+Migration `003_source_identity.sql` removes global `source_versions.sha256`
+uniqueness and adds hash/source lookup indexes. It preserves every version ID,
+rowid, stored path, timestamp, page, extraction run, and citation. `rowid` order
+still defines the latest revision. Multiple versions can share a hash and
+`stored_path`; physical byte deduplication does not merge logical sources.
+See [source identity rules](SOURCE_IDENTITY.md). The initial DDL below is
+historical; apply all numbered migrations for the current schema.
 
 ## Initial migration
 
@@ -183,8 +193,12 @@ CREATE VIRTUAL TABLE article_fts USING fts5(
   never changes an article or vault file.
 - `proposal_citations` are created transactionally with the proposal.
 - `article_citations` are replaced transactionally with a successful apply.
-- An imported source is never overwritten. New content means a new
-  `source_versions` row and new page rows.
+- Retained source bytes and version rows are immutable. New imports always get
+  new source IDs; revisions require an explicit source ID. Repeating current
+  bytes is idempotent; changed or historical bytes create a new latest version
+  and separate page rows on extraction. Retained bytes may be shared.
+- Archiving a source does not delete its shared retained files or evidence.
+  Any future cleanup must check all version references before removing bytes.
 - A completed model run stores only its strictly validated proposal JSON.
   Invalid model output is replaced by a redacted SHA-256/size diagnostic;
   transport error bodies, prompts, evidence text, URLs, and headers are not

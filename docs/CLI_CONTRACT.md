@@ -18,7 +18,7 @@ Every command accepts:
 | `kc init` | `--vault PATH` | Create config, state directory, database, and initial migration. |
 | `kc doctor` | none | Check config, writable paths, SQLite, Poppler, OCR, and configured local model. |
 | `kc status` | none | Show source, page, proposal, and article counts plus pending work. |
-| `kc import` | `FILE...` | Register supported sources and retain immutable project-local copies. |
+| `kc import` | `FILE... [--source SOURCE_ID]` | Create new logical sources, or explicitly revise one source with exactly one file; retain immutable bytes. |
 | `kc extract` | `SOURCE_ID [--force]` | Extract native text, render pages, and run local OCR when configured. |
 | `kc review extraction` | `SOURCE_ID [--page N (--text TEXT | --text-file PATH)]` | Show page image paths, extracted text, and status together; optionally correct one page before compilation. `--page N` alone narrows inspection. |
 | `kc compile` | `--concept TITLE [--source SOURCE_ID...]` | Select relevant pages and create one schema-validated pending proposal. |
@@ -50,11 +50,39 @@ kc compile --concept "Cellular Respiration" --source src_01j...
 kc compile --concept "The French Revolution"
 ```
 
+## Source imports and revisions
+
+`kc import FILE...` creates a distinct logical source for **every input**.
+Use `kc import --source SOURCE_ID FILE` to revise one active source, including
+a renamed/moved file. The source kind must match; display metadata stays stable.
+Repeating current bytes is idempotent. Returning to historical bytes creates a
+new latest version. Identical bytes share retained storage across identities.
+Run `kc init` to upgrade existing projects before using these rules.
+
+Successful JSON import entries include `outcome` (`new_source`, `new_revision`,
+or `unchanged`), `source_created`, `version_created`, `deduplicated` (retained
+bytes reused), and `restored` (historical bytes activated in a new revision).
+`deduplicated` can be true while `version_created` is true.
+
+A batch processes every file in argument order and commits each independently.
+Its JSON envelope always includes `result.sources` (successes), `result.files`
+(ordered input paths with `ok` and either `result` or `error`), and
+`result.partial_success`. If any file fails, top-level `ok` is false and an
+`error` accompanies the durable successes: `partial_import` for mixed results,
+`import_failed` if all failed. The exit code is the highest per-file failure
+code: 6 for state/internal failures, 3 for unavailable files, 2 for invalid
+inputs. Human output prints successful identities to stdout and failures to
+stderr, including when `--quiet` suppresses successful output.
+
+[Source identity rules](SOURCE_IDENTITY.md) document renames, revisions,
+activation, shared files, and complete batch examples.
+
 ## Output and exit behavior
 
 - Standard output is result data. Progress and diagnostics go to standard error.
 - `--json` emits one object with `ok`, `command`, and either `result` or
-  `error`; no progress text may appear on standard output.
+  `error`; no progress text may appear on standard output. Failed import batches
+  include both `result` and `error` to retain per-file outcomes.
 - Exit `0`: completed successfully.
 - Exit `2`: invalid command arguments or invalid project configuration.
 - Exit `3`: a requested resource does not exist or cannot be used in its current

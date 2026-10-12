@@ -70,27 +70,68 @@ std::optional<std::filesystem::path> find_project_root(
   }
 }
 
-/// Build the stable machine-readable result for one or more source imports.
-nlohmann::json import_success_json(
-    const std::vector<kc::source_import::ImportResult>& results) {
+/// Keep single-file and batch diagnostics consistent with the CLI exit contract.
+int import_exit_code(const kc::source_import::ImportErrorKind kind) {
+  using Kind = kc::source_import::ImportErrorKind;
+  return kind == Kind::state_error ? 6 : (kind == Kind::unavailable_input ? 3 : 2);
+}
+
+std::string_view import_error_code(const kc::source_import::ImportErrorKind kind) {
+  using Kind = kc::source_import::ImportErrorKind;
+  return kind == Kind::state_error ? "state_error"
+                                 : (kind == Kind::unavailable_input ? "source_unavailable"
+                                                                   : "invalid_import");
+}
+
+/// Every input gets an ordered result, even when earlier files have committed
+/// and a later file fails. `sources` remains a convenient list of successes.
+nlohmann::json import_results_json(
+    const std::vector<kc::source_import::ImportFileResult>& results) {
   auto imported = nlohmann::json::array();
-  for (const auto& result : results) {
-    imported.push_back(
-        {{"source_id", result.source.source_id.value},
-         {"source_version_id", result.version.source_version_id.value},
-         {"display_name", result.source.display_name},
-         {"source_kind", kc::domain::to_string(result.source.source_kind)},
-         {"sha256", result.version.sha256},
-         {"stored_path", result.version.stored_path.generic_string()},
-         {"media_type", result.version.media_type},
-         {"byte_size", result.version.byte_size},
-         {"source_created", result.source_created},
-         {"version_created", result.version_created},
-         {"deduplicated", !result.version_created}});
+  auto files = nlohmann::json::array();
+  bool failed = false;
+  for (const auto& file : results) {
+    if (file.failure) {
+      failed = true;
+      files.push_back({{"input_path", file.input_path.generic_string()},
+                       {"ok", false},
+                       {"error", {{"code", import_error_code(file.failure->kind)},
+                                  {"message", file.failure->message}}}});
+      continue;
+    }
+    const auto& result = *file.result;
+    const auto outcome = result.source_created ? "new_source"
+                         : (!result.version_created ? "unchanged" : "new_revision");
+    nlohmann::json item{
+        {"source_id", result.source.source_id.value},
+        {"source_version_id", result.version.source_version_id.value},
+        {"display_name", result.source.display_name},
+        {"original_filename", result.version.original_filename},
+        {"source_kind", kc::domain::to_string(result.source.source_kind)},
+        {"sha256", result.version.sha256},
+        {"stored_path", result.version.stored_path.generic_string()},
+        {"media_type", result.version.media_type},
+        {"byte_size", result.version.byte_size},
+        {"outcome", outcome},
+        {"source_created", result.source_created},
+        {"version_created", result.version_created},
+        {"deduplicated", result.deduplicated},
+        {"restored", result.restored}};
+    imported.push_back(item);
+    files.push_back({{"input_path", file.input_path.generic_string()},
+                     {"ok", true}, {"result", std::move(item)}});
   }
-  return {{"ok", true},
-          {"command", "import"},
-          {"result", {{"sources", std::move(imported)}}}};
+  const auto partial = failed && !imported.empty();
+  nlohmann::json document{
+      {"ok", !failed}, {"command", "import"},
+      {"result", {{"sources", std::move(imported)}, {"files", std::move(files)},
+                  {"partial_success", partial}}}};
+  if (failed) {
+    document["error"] = {{"code", partial ? "partial_import" : "import_failed"},
+                         {"message", "One or more files failed; see result.files. "
+                                     "Successful imports remain committed."}};
+  }
+  return document;
 }
 
 /// Build the machine-readable page extraction result.
@@ -569,6 +610,9 @@ int main(const int argc, char** argv) {
       app.add_subcommand("import", "Register sources and retain immutable project-local copies");
   import_command->fallthrough();
   std::vector<std::filesystem::path> source_files;
+  std::string revision_source_id;
+  auto* revision_source_option = import_command->add_option(
+      "--source", revision_source_id, "Add one file as a revision of this source ID");
   import_command->add_option("FILE", source_files, "Markdown, text, or PDF source file")
       ->required()
       ->expected(-1);
@@ -743,19 +787,53 @@ int main(const int argc, char** argv) {
         project = *discovered;
       }
 
+      if (revision_source_option->count() != 0U && source_files.size() != 1U) {
+        throw kc::source_import::ImportError(
+            kc::source_import::ImportErrorKind::invalid_input,
+            "--source requires exactly one revision file");
+      }
       kc::source_import::SourceImporter importer(project);
-      const auto results = importer.import_files(source_files);
-      if (json_output) {
-        std::cout << import_success_json(results).dump() << '\n';
-      } else if (!quiet) {
-        for (const auto& result : results) {
-          std::cout << (result.version_created ? "Imported " : "Already imported ")
-                    << result.source.display_name << " as "
-                    << result.source.source_id.value << " ("
-                    << result.version.source_version_id.value << ")\n";
+      std::vector<kc::source_import::ImportFileResult> results;
+      if (revision_source_option->count() == 0U) {
+        results = importer.import_files(source_files);
+      } else {
+        results.push_back(
+            {source_files.front(),
+             importer.import_file(source_files.front(),
+                                  {.source_id = kc::domain::SourceId{revision_source_id}}),
+             std::nullopt});
+      }
+      int exit_code = 0;
+      for (const auto& file : results) {
+        if (file.failure) {
+          exit_code = std::max(exit_code, import_exit_code(file.failure->kind));
         }
       }
-      return 0;
+      if (json_output) {
+        std::cout << import_results_json(results).dump() << '\n';
+      } else {
+        for (const auto& file : results) {
+          if (file.failure) {
+            std::cerr << "kc import: " << file.input_path.string() << ": "
+                      << file.failure->message << '\n';
+          } else if (!quiet) {
+            const auto& result = *file.result;
+            std::cout << (result.source_created ? "New source "
+                          : (result.version_created ? "New revision " : "Unchanged "))
+                      << result.source.display_name << " as "
+                      << result.source.source_id.value << " ("
+                      << result.version.source_version_id.value << ")";
+            if (result.deduplicated) {
+              std::cout << "; reused retained bytes";
+            }
+            if (result.restored) {
+              std::cout << "; restored historical content as latest";
+            }
+            std::cout << '\n';
+          }
+        }
+      }
+      return exit_code;
     } catch (const kc::source_import::ImportError& error) {
       const auto unavailable =
           error.kind() == kc::source_import::ImportErrorKind::unavailable_input;

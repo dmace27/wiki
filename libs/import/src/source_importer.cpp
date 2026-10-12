@@ -207,16 +207,24 @@ domain::SourceKind parse_kind(const std::string_view value) {
                     "project database contains an unknown source kind");
 }
 
-std::optional<ImportResult> find_version_by_hash(sqlite3* connection,
-                                                 const std::string_view hash) {
+/// Global lookups reuse bytes; source-scoped lookups detect idempotence and
+/// historical restoration without borrowing another document's identity.
+std::optional<ImportResult> find_version_by_hash(
+    sqlite3* connection, const std::string_view hash,
+    const std::optional<domain::SourceId>& source_id = std::nullopt) {
   Statement statement(
       connection,
       "SELECT s.source_id, s.display_name, s.source_kind, s.created_at, "
       "s.archived_at, v.source_version_id, v.sha256, v.original_filename, "
       "v.stored_path, v.media_type, v.byte_size, v.imported_at "
       "FROM source_versions v JOIN sources s ON s.source_id = v.source_id "
-      "WHERE v.sha256 = ?");
+      "WHERE v.sha256 = ? AND (? IS NULL OR s.source_id = ?) "
+      "ORDER BY v.rowid DESC LIMIT 1");
   statement.bind_text(1, hash);
+  if (source_id) {
+    statement.bind_text(2, source_id->value);
+    statement.bind_text(3, source_id->value);
+  }
   if (statement.step() != SQLITE_ROW) {
     return std::nullopt;
   }
@@ -238,19 +246,18 @@ std::optional<ImportResult> find_version_by_hash(sqlite3* connection,
       .media_type = statement.text(9),
       .byte_size = static_cast<std::uint64_t>(statement.integer(10)),
       .imported_at = statement.text(11)};
-  return ImportResult{std::move(source), std::move(version), false, false};
+  return ImportResult{.source = std::move(source),
+                      .version = std::move(version),
+                      .deduplicated = true};
 }
 
 std::optional<domain::Source> find_source(sqlite3* connection,
-                                          const std::string_view display_name,
-                                          const domain::SourceKind kind) {
+                                         const domain::SourceId& source_id) {
   Statement statement(
       connection,
       "SELECT source_id, display_name, source_kind, created_at, archived_at "
-      "FROM sources WHERE display_name = ? AND source_kind = ? "
-      "ORDER BY created_at, source_id LIMIT 1");
-  statement.bind_text(1, display_name);
-  statement.bind_text(2, domain::to_string(kind));
+      "FROM sources WHERE source_id = ?");
+  statement.bind_text(1, source_id.value);
   if (statement.step() != SQLITE_ROW) {
     return std::nullopt;
   }
@@ -313,9 +320,16 @@ SourceImporter::SourceImporter(std::filesystem::path project_root)
     throw ImportError(ImportErrorKind::invalid_project,
                       "project state database does not exist; run 'kc init' first");
   }
+  storage::Database database(state_path);
+  if (database.scalar_integer(
+          "SELECT COUNT(*) FROM schema_migrations WHERE version = 3") != 1) {
+    throw ImportError(ImportErrorKind::invalid_project,
+                      "source identity migration is required; run 'kc init' first");
+  }
 }
 
-ImportResult SourceImporter::import_file(const std::filesystem::path& input_path) {
+ImportResult SourceImporter::import_file(const std::filesystem::path& input_path,
+                                        const ImportOptions& options) {
   const auto format = source_format(input_path);
   std::error_code filesystem_error;
   if (!std::filesystem::is_regular_file(input_path, filesystem_error)) {
@@ -362,7 +376,25 @@ ImportResult SourceImporter::import_file(const std::filesystem::path& input_path
   database.execute("BEGIN IMMEDIATE;");
   std::filesystem::path newly_retained_path;
   try {
-    if (auto existing = find_version_by_hash(connection, hash)) {
+    const auto filename = input_path.filename().string();
+    std::optional<domain::Source> source;
+    if (options.source_id) {
+      source = find_source(connection, *options.source_id);
+      if (!source || source->archived_at) {
+        throw ImportError(ImportErrorKind::invalid_input,
+                          "revision source does not exist or is archived: " +
+                              options.source_id->value);
+      }
+      if (source->source_kind != format.kind) {
+        throw ImportError(ImportErrorKind::invalid_input,
+                          "revision must use the existing source kind");
+      }
+    }
+
+    // Identity and physical byte reuse are independent. Never return another
+    // source's identity just because its file has the same digest.
+    auto existing = find_version_by_hash(connection, hash);
+    if (existing) {
       if (!is_safe_relative(existing->version.stored_path)) {
         throw ImportError(ImportErrorKind::state_error,
                           "project database contains an unsafe retained source path");
@@ -375,17 +407,28 @@ ImportResult SourceImporter::import_file(const std::filesystem::path& input_path
                             "retained source does not match its recorded SHA-256");
         }
       } else {
+        // Repair a missing shared copy from the staged, hash-verified input.
         std::filesystem::create_directories(retained_path.parent_path());
         std::filesystem::rename(staged.path(), retained_path);
         staged.release();
         make_read_only(retained_path);
       }
-      database.execute("COMMIT;");
-      return *existing;
     }
 
-    const auto filename = input_path.filename().string();
-    auto source = find_source(connection, filename, format.kind);
+    bool restored = false;
+    if (source) {
+      Statement latest(connection,
+                       "SELECT sha256 FROM source_versions WHERE source_id = ? "
+                       "ORDER BY rowid DESC LIMIT 1");
+      latest.bind_text(1, source->source_id.value);
+      if (latest.step() == SQLITE_ROW && latest.text(0) == hash) {
+        auto current = find_version_by_hash(connection, hash, source->source_id);
+        database.execute("COMMIT;");
+        return *current;
+      }
+      restored = find_version_by_hash(connection, hash, source->source_id).has_value();
+    }
+
     const auto source_created = !source.has_value();
     if (!source) {
       source = domain::Source{
@@ -412,18 +455,27 @@ ImportResult SourceImporter::import_file(const std::filesystem::path& input_path
                         "configured source directory is not project-relative");
     }
 
-    newly_retained_path = project_root_ / version.stored_path;
-    std::filesystem::create_directories(newly_retained_path.parent_path());
-    if (std::filesystem::exists(newly_retained_path)) {
-      throw ImportError(ImportErrorKind::state_error,
-                        "generated retained source path already exists");
+    if (existing) {
+      version.stored_path = existing->version.stored_path;
+    } else {
+      newly_retained_path = project_root_ / version.stored_path;
+      std::filesystem::create_directories(newly_retained_path.parent_path());
+      if (std::filesystem::exists(newly_retained_path)) {
+        throw ImportError(ImportErrorKind::state_error,
+                          "generated retained source path already exists");
+      }
+      std::filesystem::rename(staged.path(), newly_retained_path);
+      staged.release();
+      make_read_only(newly_retained_path);
     }
-    std::filesystem::rename(staged.path(), newly_retained_path);
-    staged.release();
-    make_read_only(newly_retained_path);
     insert_version(connection, version);
     database.execute("COMMIT;");
-    return ImportResult{std::move(*source), std::move(version), source_created, true};
+    return ImportResult{.source = std::move(*source),
+                        .version = std::move(version),
+                        .source_created = source_created,
+                        .version_created = true,
+                        .deduplicated = existing.has_value(),
+                        .restored = restored};
   } catch (...) {
     try {
       database.execute("ROLLBACK;");
@@ -441,12 +493,21 @@ ImportResult SourceImporter::import_file(const std::filesystem::path& input_path
   }
 }
 
-std::vector<ImportResult> SourceImporter::import_files(
+std::vector<ImportFileResult> SourceImporter::import_files(
     const std::vector<std::filesystem::path>& input_paths) {
-  std::vector<ImportResult> results;
+  std::vector<ImportFileResult> results;
   results.reserve(input_paths.size());
   for (const auto& input : input_paths) {
-    results.push_back(import_file(input));
+    try {
+      results.push_back({input, import_file(input), std::nullopt});
+    } catch (const ImportError& error) {
+      results.push_back({input, std::nullopt, ImportFailure{error.kind(), error.what()}});
+    } catch (const std::exception& error) {
+      // Storage/filesystem failures also belong to the affected file, so prior
+      // durable successes and later inputs remain observable to callers.
+      results.push_back({input, std::nullopt,
+                         ImportFailure{ImportErrorKind::state_error, error.what()}});
+    }
   }
   return results;
 }

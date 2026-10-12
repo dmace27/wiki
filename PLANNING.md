@@ -1,9 +1,6 @@
 THIS IS A CONVERSATION I HAD TO PLAN THIS PROJECT
 
 
-
-
-
 The Obsidian LLM Wiki is a phenomenal project because it directly implements th…
 here is a writeup for a project that I want to do. I want to make a product that I can post for other people to use as well that compiles all the knowledge that you accumulate over time from notes and learning.
 Explain how I can execute this plan. Do not change any files yet
