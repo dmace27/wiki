@@ -267,13 +267,45 @@ completed.
 
 **Evidence:** `VaultWriter::apply` holds a SQLite write transaction and restores article bytes on caught post-write failures. This is useful exception recovery, but a process crash after rename and before database commit bypasses the catch block. POSIX writes flush streams without an explicit filesystem durability barrier.
 
-- [ ] Add a durable apply journal/recovery protocol covering backup creation, source copies, article replacement, and database publication. Recover interrupted runs when opening the project.
-- [ ] Define and implement durability guarantees for temporary files, backups, rename, and parent directories on supported systems.
-- [ ] Detect external editor changes between preview, reading the file, and replacement. A SQLite lock serializes compiler processes; it cannot lock out Obsidian or another editor.
-- [ ] Provide a supported history/restore or rollback command that restores Markdown, citations, audit state, and FTS together, refusing to overwrite newer user changes without explicit review.
-- [ ] Handle orphaned temporary files/source copies/backups and interrupted `running` extraction records through safe reconciliation.
+- [x] Add a durable apply journal/recovery protocol covering backup creation, source copies, article replacement, and database publication. Recover interrupted runs when opening the project.
+- [x] Define and implement durability guarantees for temporary files, backups, rename, and parent directories on supported systems.
+- [x] Detect external editor changes between preview, reading the file, and replacement. A SQLite lock serializes compiler processes; it cannot lock out Obsidian or another editor.
+- [x] Provide a supported history/restore or rollback command that restores Markdown, citations, audit state, and FTS together, refusing to overwrite newer user changes without explicit review.
+- [x] Handle orphaned temporary files/source copies/backups and interrupted `running` extraction records through safe reconciliation.
 
 **Tests / done when:** inject failure/termination before and after each durable step, restart, and verify that article bytes, proposal status, citations, and search agree. Test full disk, permission denial, locked files, failed commit, and failed restoration. Existing success-path tests do not establish these guarantees.
+
+**Completed October 13, 2026:** Apply and restore now publish a fully synced
+filesystem journal before backups, source copies, or article mutation. A commit
+marker published with article/proposal/citation/audit/snapshot/FTS state decides
+restart rollback versus committed cleanup. Project opening recovers interrupted
+runs under SQLite's write lock; cleanup is serialized with concurrent openers.
+macOS durability uses fsync/F_FULLFSYNC and parent-directory synchronization,
+with FULL-synchronous SQLite publication. Native exchange verifies the exact
+displaced article; exclusive creation and pre-commit checks detect external
+saves. Ambiguous newer user bytes remain untouched with reviewable recovery
+artifacts. `kc history`, exact-token `kc restore`, and `kc recover` expose
+supported revision inspection, coordinated restoration, and explicit conflict
+acknowledgement. Restores reactivate historical structured evidence and FTS,
+append audit history, and cannot resurrect stale approvals when bytes repeat.
+Journal-owned orphan copies/backups/temporaries are reconciled; unowned legacy
+artifacts are inventoried and retained. OS leases protect live extraction runs
+while dead attempts are failed/reconciled without deleting historical images.
+Migration 007 preserves legacy history and never invents unavailable snapshots;
+upgrade existing projects with `kc init`.
+[Durable apply and recovery guarantees](docs/APPLY_RECOVERY.md) document the
+protocol, supported systems, history/restore CLI, conflict handling, and limits.
+Development and ASan/UBSan (warnings-as-errors) suites each passed **164/164
+tests**. Real child-process termination exercises every durable create/collision,
+update, restore, and recovery boundary. Failure tests cover injected full-disk
+and partial writes, permission denial, native immutable locks, SQL publication
+failure, SQLite commit rejection, and failed restoration/retry. Concurrent
+editor saves, binary conflicts, escaping journals, dead/live extraction, and
+concurrent cleanup/opening are covered. The release build and Task 9 CLI
+history/restore/recovery smoke passed, together with Task 7/8 CLI regressions.
+Native verification remains macOS arm64 on local storage; physical power loss,
+other platforms, and real OCR/model quality are not claimed. No other finish
+task was completed.
 
 ### 10. Bound real-world workloads and adapter execution — P1
 

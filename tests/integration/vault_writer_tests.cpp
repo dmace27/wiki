@@ -4,6 +4,7 @@
 #include "kc/review/review_service.hpp"
 #include "kc/search/search_index.hpp"
 #include "kc/import/sha256.hpp"
+#include "kc/updates/article_updates.hpp"
 #include "kc/import/source_importer.hpp"
 #include "kc/storage/database.hpp"
 #include "kc/storage/project_initializer.hpp"
@@ -882,3 +883,612 @@ TEST_CASE("invalid user article encoding produces a safe JSON preview diagnostic
   CHECK(read_file(path) == malformed);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == (tracked ? 1 : 0));
 }
+
+#if !defined(_WIN32)
+#include <sys/wait.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sqlite3.h>
+#include <cerrno>
+
+namespace {
+/// The child exits without stack unwinding, precisely bypassing every catch
+/// and RAII cleanup. Parent opens a fresh connection to trigger restart recovery.
+void terminate_apply(const std::filesystem::path& root, const kc::domain::ProposalId& proposal,
+                     std::string_view boundary, bool overwrite) {
+  const auto child = fork();
+  REQUIRE(child >= 0);
+  if (child == 0) {
+    try {
+      kc::vault::VaultWriter writer(root,[&](std::string_view point) {
+        if (point == boundary) _exit(77);
+      });
+      static_cast<void>(writer.apply(proposal,{.allow_overwrite_user_file=overwrite}));
+    } catch (...) { _exit(78); }
+    _exit(79); // Missing checkpoint must fail the test, not silently pass.
+  }
+  int status = 0;
+  REQUIRE(waitpid(child,&status,0) == child);
+  REQUIRE(WIFEXITED(status));
+  REQUIRE(WEXITSTATUS(status) == 77);
+}
+
+bool committed_boundary(std::string_view point) {
+  return point == "after_database_commit" || point == "before_cleanup" || point == "after_cleanup";
+}
+
+const std::vector<std::string_view> all_apply_boundaries{
+    "before_journal","after_journal","before_backup","after_backup",
+    "before_source_copies","before_source_publish","after_source_publish","after_source_copies",
+    "before_article_stage","after_article_stage","before_article_replace","after_article_exchange",
+    "after_article_replace","before_database_publish","after_database_publish",
+    "before_database_commit","after_database_commit","before_cleanup","after_cleanup"};
+
+void no_active_artifacts(const std::filesystem::path& root) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+    CHECK_FALSE(entry.path().filename().string().ends_with(".tmp"));
+    CHECK_FALSE(entry.path().filename().string().ends_with(".pending"));
+    if (entry.path().parent_path().filename() == "transactions" && entry.path().extension()==".json") {
+      FAIL("active journal survived successful recovery");
+    }
+  }
+}
+}
+
+TEST_CASE("termination at every apply durability boundary recovers create and collision consistently", "[apply-recovery]") {
+  for (const bool collision : {false,true}) for (const auto point : all_apply_boundaries) {
+    CAPTURE(collision,point);
+    kc::test::TemporaryDirectory temporary;
+    const auto root = temporary.path() / "project";
+    const auto initialized = kc::storage::initialize_project(init_options(root));
+    kc::storage::Database database(initialized.state_path);
+    const auto fixture = seed_create_proposal(root,database);
+    const auto article = root / "vault/Markov Chains.md";
+    const std::string prior = "# Untracked user page\nDo not lose these bytes.\n";
+    if (collision) write_file(article,prior);
+    kc::vault::VaultWriter writer(root);
+    const auto preview = writer.preview(fixture.proposal_id,{.allow_overwrite_user_file=collision});
+    REQUIRE(preview.valid);
+    writer.approve(fixture.proposal_id,preview.token,{.allow_overwrite_user_file=collision});
+    terminate_apply(root,fixture.proposal_id,point,collision);
+    kc::storage::Database restarted(initialized.state_path);
+    const bool committed = committed_boundary(point);
+    CHECK(restarted.scalar_text("SELECT status FROM proposals") == (committed ? "applied" : "approved"));
+    CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM articles") == (committed ? 1 : 0));
+    CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM apply_runs") == (committed ? 1 : 0));
+    CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM article_citations") == (committed ? 3 : 0));
+    CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM article_fts") == (committed ? 1 : 0));
+    CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM article_snapshots") == (committed ? 1 : 0));
+    if (committed) CHECK(read_file(article) == *preview.after);
+    else if (collision) CHECK(read_file(article) == prior);
+    else CHECK_FALSE(std::filesystem::exists(article));
+    // Copy paths come from the renderer/config rather than a hard-coded guess.
+    const auto config = initialized.config;
+    std::size_t copies = 0;
+    if (std::filesystem::exists(root / config.paths.vault / config.vault.source_directory)) {
+      for (const auto& entry : std::filesystem::recursive_directory_iterator(root / config.paths.vault / config.vault.source_directory)) {
+        if (entry.is_regular_file()) ++copies;
+      }
+    }
+    CHECK(copies == (committed ? 1U : 0U));
+    no_active_artifacts(root);
+    // Repeated open must be idempotent, including recovery after cleanup.
+    kc::storage::Database twice(initialized.state_path);
+    CHECK(twice.scalar_integer("SELECT COUNT(*) FROM apply_runs") == (committed ? 1 : 0));
+  }
+}
+
+TEST_CASE("termination during updates and restores keeps active history citations Markdown and search together", "[apply-recovery]") {
+  for (const bool restoring : {false,true}) for (const auto point : all_apply_boundaries) {
+    if (point == "before_source_publish" || point == "after_source_publish") continue;
+    CAPTURE(restoring,point);
+    kc::test::TemporaryDirectory temporary;
+    const auto root = temporary.path() / "project";
+    const auto initialized = kc::storage::initialize_project(init_options(root));
+    kc::storage::Database database(initialized.state_path);
+    const auto fixture = seed_create_proposal(root,database);
+    kc::vault::VaultWriter writer(root);
+    kc::test::approve_preview(writer,fixture.proposal_id);
+    const auto first = writer.apply(fixture.proposal_id);
+    const auto first_bytes = read_file(root / first.vault_path);
+    const auto update = seed_update_proposal(database,fixture.page_id,first.article_id,"Changed explanation for a second revision.");
+    const auto preview = writer.preview(update);
+    REQUIRE(preview.valid);
+    writer.approve(update,preview.token);
+    std::string prior = first_bytes;
+    std::string next = *preview.after;
+    std::string before_run = first.apply_run_id.value;
+    std::string after_run;
+    if (restoring) {
+      const auto second = writer.apply(update);
+      prior = next; next = first_bytes; before_run = second.apply_run_id.value; after_run = first.apply_run_id.value;
+      const auto restore = writer.restore_preview(first.apply_run_id);
+      const auto token = restore.at("preview_sha256").get<std::string>();
+      const auto child = fork();
+      REQUIRE(child>=0);
+      if (child==0) {
+        try {
+          kc::vault::VaultWriter interrupted(root,[&](std::string_view current) { if (current==point) _exit(77); });
+          static_cast<void>(interrupted.restore(first.apply_run_id,token));
+        } catch (...) { _exit(78); }
+        _exit(79);
+      }
+      int status=0; REQUIRE(waitpid(child,&status,0)==child); REQUIRE(WIFEXITED(status)); REQUIRE(WEXITSTATUS(status)==77);
+    } else terminate_apply(root,update,point,false);
+    kc::storage::Database restarted(initialized.state_path);
+    const bool committed = committed_boundary(point);
+    const auto bytes = committed ? next : prior;
+    CHECK(read_file(root / first.vault_path) == bytes);
+    CHECK(restarted.scalar_text("SELECT body FROM article_fts") == bytes);
+    CHECK(restarted.scalar_text("SELECT content_sha256 FROM articles") == kc::source_import::sha256_text(bytes));
+    CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM article_citations") == 3);
+    CHECK(restarted.scalar_text("SELECT status FROM proposals WHERE proposal_id="+sql_string(update.value)) ==
+        (restoring || committed ? "applied" : "approved"));
+    CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM restore_runs") == (restoring && committed ? 1 : 0));
+    if (!committed) CHECK(restarted.scalar_text("SELECT current_apply_run_id FROM articles") == before_run);
+    else if (restoring) CHECK(restarted.scalar_text("SELECT current_apply_run_id FROM articles") == after_run);
+    else CHECK(restarted.scalar_text("SELECT current_apply_run_id FROM articles") != before_run);
+    no_active_artifacts(root);
+  }
+}
+
+TEST_CASE("external saves during staging exchange publication and recovery are never overwritten silently", "[apply-recovery]") {
+  for (const auto point : {"before_article_stage","before_article_replace","after_article_exchange","before_database_commit"}) {
+    CAPTURE(point);
+    kc::test::TemporaryDirectory temporary;
+    const auto root=temporary.path()/"project";
+    const auto initialized=kc::storage::initialize_project(init_options(root));
+    kc::storage::Database database(initialized.state_path);
+    const auto fixture=seed_create_proposal(root,database);
+    const auto article=root/"vault/Markov Chains.md";
+    const std::string old="Original untracked file\n";
+    const std::string user="A concurrent editor save must survive\n";
+    write_file(article,old);
+    kc::vault::VaultWriter writer(root,[&](std::string_view current) {
+      if (current==point) {
+        // Model Obsidian's atomic-save behavior, rather than cooperative locks.
+        const auto edit=root/"vault/editor-save.md"; write_file(edit,user); std::filesystem::rename(edit,article);
+      }
+    });
+    const auto preview=writer.preview(fixture.proposal_id,{.allow_overwrite_user_file=true});
+    writer.approve(fixture.proposal_id,preview.token,{.allow_overwrite_user_file=true});
+    CHECK_THROWS(writer.apply(fixture.proposal_id,{.allow_overwrite_user_file=true}));
+    CHECK(read_file(article)==user);
+    CHECK(database.scalar_text("SELECT status FROM proposals")=="approved");
+    CHECK(database.scalar_integer("SELECT COUNT(*) FROM article_fts")==0);
+    if (std::string_view(point)=="after_article_exchange" || std::string_view(point)=="before_database_commit") {
+      CHECK_THROWS(kc::storage::Database(initialized.state_path));
+      kc::storage::keep_recovery_conflicts(root);
+      CHECK(read_file(article)==user);
+      CHECK(std::filesystem::is_directory(root/".knowledge-compiler/recovery-conflicts"));
+    }
+    kc::storage::Database restart(initialized.state_path);
+    CHECK(restart.scalar_integer("SELECT COUNT(*) FROM apply_runs")==0);
+  }
+}
+
+TEST_CASE("failed disk permission locked-file and commit boundaries roll back through the durable journal", "[apply-recovery]") {
+  for (const auto code : {ENOSPC,EACCES,EBUSY}) for (const auto point : {"before_backup","before_source_publish","before_article_replace"}) {
+    CAPTURE(code,point);
+    kc::test::TemporaryDirectory temporary;
+    const auto root=temporary.path()/"project";
+    const auto initialized=kc::storage::initialize_project(init_options(root));
+    kc::storage::Database database(initialized.state_path);
+    const auto fixture=seed_create_proposal(root,database);
+    const auto article=root/"vault/Markov Chains.md";
+    write_file(article,"User collision\n");
+    kc::vault::VaultWriter writer(root,[&](std::string_view current) {
+      if (current==point) throw std::system_error(code,std::generic_category(),"injected OS failure");
+    });
+    const auto preview=writer.preview(fixture.proposal_id,{.allow_overwrite_user_file=true});
+    writer.approve(fixture.proposal_id,preview.token,{.allow_overwrite_user_file=true});
+    CHECK_THROWS(writer.apply(fixture.proposal_id,{.allow_overwrite_user_file=true}));
+    CHECK(read_file(article)=="User collision\n");
+    kc::storage::Database restart(initialized.state_path);
+    CHECK(restart.scalar_integer("SELECT COUNT(*) FROM apply_runs")==0);
+    CHECK(restart.scalar_integer("SELECT COUNT(*) FROM article_fts")==0);
+    no_active_artifacts(root);
+  }
+  SECTION("SQLite publication failure after article exchange") {
+    kc::test::TemporaryDirectory temporary;
+    const auto root=temporary.path()/"project";
+    const auto initialized=kc::storage::initialize_project(init_options(root));
+    kc::storage::Database database(initialized.state_path);
+    const auto fixture=seed_create_proposal(root,database);
+    database.execute("CREATE TRIGGER fail_publication BEFORE INSERT ON apply_runs BEGIN SELECT RAISE(ABORT,'injected publication failure'); END");
+    kc::vault::VaultWriter writer(root); kc::test::approve_preview(writer,fixture.proposal_id);
+    CHECK_THROWS(writer.apply(fixture.proposal_id));
+    CHECK_FALSE(std::filesystem::exists(root/"vault/Markov Chains.md"));
+    CHECK(database.scalar_text("SELECT status FROM proposals")=="approved");
+    no_active_artifacts(root);
+  }
+}
+
+TEST_CASE("failed recovery retains the journal and succeeds on retry without trusting a damaged backup", "[apply-recovery]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root=temporary.path()/"project";
+  const auto initialized=kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture=seed_create_proposal(root,database);
+  const auto article=root/"vault/Markov Chains.md";
+  const std::string old="User's pre-apply content\n"; write_file(article,old);
+  kc::vault::VaultWriter writer(root);
+  const auto preview=writer.preview(fixture.proposal_id,{.allow_overwrite_user_file=true});
+  writer.approve(fixture.proposal_id,preview.token,{.allow_overwrite_user_file=true});
+  terminate_apply(root,fixture.proposal_id,"after_article_replace",true);
+  // Real directory permission denial makes recovery's sibling write fail.
+  REQUIRE(chmod((root/"vault").c_str(),0500)==0);
+  CHECK_THROWS(kc::storage::Database(initialized.state_path));
+  CHECK(read_file(article)==*preview.after);
+  REQUIRE(chmod((root/"vault").c_str(),0700)==0);
+  kc::storage::Database restarted(initialized.state_path);
+  CHECK(read_file(article)==old);
+  CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM apply_runs")==0);
+  no_active_artifacts(root);
+}
+#endif
+
+TEST_CASE("history restore requires current reviewed bytes and reactivates structured evidence and search", "[apply-recovery]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root=temporary.path()/"project";
+  const auto initialized=kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture=seed_create_proposal(root,database);
+  kc::vault::VaultWriter writer(root); kc::test::approve_preview(writer,fixture.proposal_id);
+  const auto first=writer.apply(fixture.proposal_id);
+  const auto first_bytes=read_file(root/first.vault_path);
+  const auto newer_page=kc::domain::generate_page_id();
+  database.execute("INSERT INTO source_pages(page_id,source_version_id,page_number,text,text_status,text_sha256) "
+      "SELECT "+sql_string(newer_page.value)+",source_version_id,4,text,text_status,text_sha256 FROM source_pages WHERE page_id="+sql_string(fixture.page_id.value));
+  const auto update=seed_update_proposal(database,newer_page,first.article_id,"Novel second revision words.");
+  kc::test::approve_preview(writer,update); const auto second=writer.apply(update);
+  CHECK(database.scalar_text("SELECT page_id FROM article_citations LIMIT 1")==newer_page.value);
+  const auto before=writer.restore_preview(first.apply_run_id);
+  CHECK(before.at("after")==first_bytes);
+  CHECK_THROWS(writer.restore(first.apply_run_id,""));
+  const auto newer=read_file(root/first.vault_path)+"\nA new user note\n";
+  write_file(root/first.vault_path,newer);
+  CHECK_THROWS(writer.restore(first.apply_run_id,before.at("preview_sha256").get<std::string>()));
+  CHECK(read_file(root/first.vault_path)==newer);
+  const auto review=writer.restore_preview(first.apply_run_id);
+  CHECK(review.at("diff").get<std::string>().find("-A new user note")!=std::string::npos);
+  static_cast<void>(writer.restore(first.apply_run_id,review.at("preview_sha256").get<std::string>()));
+  CHECK(read_file(root/first.vault_path)==first_bytes);
+  CHECK(database.scalar_text("SELECT body FROM article_fts")==first_bytes);
+  CHECK(database.scalar_text("SELECT current_apply_run_id FROM articles")==first.apply_run_id.value);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM article_citations")==3);
+  CHECK(database.scalar_text("SELECT page_id FROM article_citations LIMIT 1")==fixture.page_id.value);
+  const auto history=writer.history(first.article_id);
+  REQUIRE(history.at("revisions").size()==2);
+  CHECK(history.at("revisions")[0].at("current")==true);
+  CHECK(history.at("revisions")[1].at("current")==false);
+  CHECK(history.at("restores")[0].at("from_apply_run_id")==second.apply_run_id.value);
+  const auto backup=history.at("restores")[0].at("backup_path").get<std::string>();
+  CHECK(read_file(root/backup)==newer);
+  // Compiler accumulation follows the restored structured revision, not rowid.
+  const auto base=kc::updates::load_base(database.native_handle(),root,initialized.config,first.article_id);
+  CHECK(base.apply_run_id==first.apply_run_id);
+  CHECK(base.proposal.sections.front().blocks.front().text=="A Markov chain moves between states.");
+}
+
+#if !defined(_WIN32)
+TEST_CASE("termination during recovery itself is idempotent before and after each restoration step", "[apply-recovery]") {
+  for (const auto point : {"before_recovery_stage","after_recovery_stage","before_recovery_replace",
+                          "after_recovery_exchange","after_recovery_replace","before_recovery_cleanup","after_recovery_cleanup"}) {
+    CAPTURE(point);
+    kc::test::TemporaryDirectory temporary;
+    const auto root=temporary.path()/"project";
+    const auto initialized=kc::storage::initialize_project(init_options(root));
+    kc::storage::Database database(initialized.state_path);
+    const auto fixture=seed_create_proposal(root,database);
+    const auto article=root/"vault/Markov Chains.md";
+    const std::string old="Original user bytes survive repeated process deaths.\n";
+    write_file(article,old);
+    kc::vault::VaultWriter writer(root);
+    const auto preview=writer.preview(fixture.proposal_id,{.allow_overwrite_user_file=true});
+    writer.approve(fixture.proposal_id,preview.token,{.allow_overwrite_user_file=true});
+    terminate_apply(root,fixture.proposal_id,"after_article_replace",true);
+    const auto child=fork(); REQUIRE(child>=0);
+    if (child==0) {
+      try {
+        kc::storage::Database recovery(initialized.state_path,kc::storage::OpenMode::read_write,false);
+        kc::storage::recover_on_open(recovery,initialized.state_path,false,[&](std::string_view current) { if (current==point) _exit(77); });
+      } catch (...) { _exit(78); }
+      _exit(79);
+    }
+    int status=0; REQUIRE(waitpid(child,&status,0)==child); REQUIRE(WIFEXITED(status)); REQUIRE(WEXITSTATUS(status)==77);
+    kc::storage::Database restarted(initialized.state_path);
+    CHECK(read_file(article)==old);
+    CHECK(restarted.scalar_text("SELECT status FROM proposals")=="approved");
+    CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM article_fts")==0);
+    CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM apply_runs")==0);
+    no_active_artifacts(root);
+  }
+}
+
+namespace {
+// SQLite's actual commit hook rejects publication at COMMIT, after all SQL and
+// file changes have executed. This differs from a pre-commit thrown exception.
+bool reject_next_sqlite_commit=false;
+int reject_commit(void*) { return reject_next_sqlite_commit ? 1 : 0; }
+int install_commit_hook(sqlite3* connection,char**,const sqlite3_api_routines*) {
+  sqlite3_commit_hook(connection,reject_commit,nullptr);
+  return SQLITE_OK;
+}
+class CommitHookFixture {
+ public:
+  CommitHookFixture() {
+    if (sqlite3_auto_extension(reinterpret_cast<void(*)()>(install_commit_hook))!=SQLITE_OK) throw std::runtime_error("cannot install commit failure hook");
+  }
+  ~CommitHookFixture() { reject_next_sqlite_commit=false; sqlite3_cancel_auto_extension(reinterpret_cast<void(*)()>(install_commit_hook)); }
+};
+}
+TEST_CASE("a real SQLite commit rejection restores bytes and leaves proposal citations and search unpublished", "[apply-recovery]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root=temporary.path()/"project";
+  const auto initialized=kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture=seed_create_proposal(root,database);
+  const auto article=root/"vault/Markov Chains.md";
+  write_file(article,"Previous user bytes\n");
+  CommitHookFixture hooks;
+  kc::vault::VaultWriter writer(root,[](std::string_view point) {
+    if (point=="before_database_commit") reject_next_sqlite_commit=true;
+  });
+  const auto preview=writer.preview(fixture.proposal_id,{.allow_overwrite_user_file=true});
+  writer.approve(fixture.proposal_id,preview.token,{.allow_overwrite_user_file=true});
+  CHECK_THROWS(writer.apply(fixture.proposal_id,{.allow_overwrite_user_file=true}));
+  reject_next_sqlite_commit=false;
+  kc::storage::Database restart(initialized.state_path);
+  CHECK(read_file(article)=="Previous user bytes\n");
+  CHECK(restart.scalar_text("SELECT status FROM proposals")=="approved");
+  CHECK(restart.scalar_integer("SELECT COUNT(*) FROM article_citations")==0);
+  CHECK(restart.scalar_integer("SELECT COUNT(*) FROM article_fts")==0);
+  no_active_artifacts(root);
+}
+
+TEST_CASE("recovery refuses escaping journals and never removes unrelated files", "[apply-recovery]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root=temporary.path()/"project";
+  const auto initialized=kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture=seed_create_proposal(root,database);
+  kc::vault::VaultWriter writer(root); kc::test::approve_preview(writer,fixture.proposal_id);
+  terminate_apply(root,fixture.proposal_id,"after_journal",false);
+  const auto journal_dir=root/".knowledge-compiler/transactions";
+  const auto entry=std::filesystem::directory_iterator(journal_dir)->path();
+  auto journal=kc::test::read_json(entry);
+  const auto external=temporary.path()/"external.md";
+  write_file(external,"Never touch outside bytes\n");
+  journal["destination"]="../external.md";
+  write_file(entry,journal.dump());
+  CHECK_THROWS(kc::storage::Database(initialized.state_path));
+  CHECK_THROWS(kc::storage::keep_recovery_conflicts(root));
+  CHECK(read_file(external)=="Never touch outside bytes\n");
+}
+#endif
+
+#if !defined(_WIN32)
+TEST_CASE("partial backup and article staging writes from disk exhaustion are reconciled safely", "[apply-recovery]") {
+  for (const auto point : {"before_backup","before_article_stage"}) {
+    CAPTURE(point);
+    kc::test::TemporaryDirectory temporary;
+    const auto root=temporary.path()/"project";
+    const auto initialized=kc::storage::initialize_project(init_options(root));
+    kc::storage::Database database(initialized.state_path);
+    const auto fixture=seed_create_proposal(root,database);
+    const auto article=root/"vault/Markov Chains.md";
+    const std::string old="Complete existing user content\n"; write_file(article,old);
+    kc::vault::VaultWriter writer(root,[&](std::string_view current) {
+      if (current==point) {
+        const auto dir=root/".knowledge-compiler/transactions";
+        const auto journal=kc::test::read_json(std::filesystem::directory_iterator(dir)->path());
+        const auto field=std::string_view(point)=="before_backup" ? "backup" : "temporary";
+        const auto partial=root/journal.at(field).get<std::string>();
+        std::filesystem::create_directories(partial.parent_path());
+        write_file(partial,std::string_view(point)=="before_backup" ? "Complete" : "---\npartly staged");
+        throw std::system_error(ENOSPC,std::generic_category(),"injected short write with disk full");
+      }
+    });
+    const auto preview=writer.preview(fixture.proposal_id,{.allow_overwrite_user_file=true});
+    writer.approve(fixture.proposal_id,preview.token,{.allow_overwrite_user_file=true});
+    CHECK_THROWS(writer.apply(fixture.proposal_id,{.allow_overwrite_user_file=true}));
+    CHECK(read_file(article)==old);
+    kc::storage::Database restart(initialized.state_path);
+    CHECK(restart.scalar_text("SELECT status FROM proposals")=="approved");
+    CHECK(restart.scalar_integer("SELECT COUNT(*) FROM apply_runs")==0);
+    no_active_artifacts(root);
+  }
+}
+
+TEST_CASE("a concurrent untracked create cannot be replaced in the exclusive publication gap", "[apply-recovery]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root=temporary.path()/"project";
+  const auto initialized=kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture=seed_create_proposal(root,database);
+  const auto article=root/"vault/Markov Chains.md";
+  kc::vault::VaultWriter writer(root,[&](std::string_view current) {
+    if (current=="before_article_replace") write_file(article,"New user-owned file in the rename gap\n");
+  });
+  kc::test::approve_preview(writer,fixture.proposal_id);
+  CHECK_THROWS(writer.apply(fixture.proposal_id));
+  CHECK(read_file(article)=="New user-owned file in the rename gap\n");
+  kc::storage::keep_recovery_conflicts(root);
+  kc::storage::Database restart(initialized.state_path);
+  CHECK(restart.scalar_integer("SELECT COUNT(*) FROM articles")==0);
+  CHECK(restart.scalar_text("SELECT status FROM proposals")=="approved");
+}
+
+#if defined(__APPLE__)
+TEST_CASE("native immutable file locks reject replacement without losing approved or user state", "[apply-recovery]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root=temporary.path()/"project";
+  const auto initialized=kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture=seed_create_proposal(root,database);
+  const auto article=root/"vault/Markov Chains.md";
+  write_file(article,"Locked user file\n");
+  kc::vault::VaultWriter writer(root);
+  const auto preview=writer.preview(fixture.proposal_id,{.allow_overwrite_user_file=true});
+  writer.approve(fixture.proposal_id,preview.token,{.allow_overwrite_user_file=true});
+  REQUIRE(chflags(article.c_str(),UF_IMMUTABLE)==0);
+  struct Unlock { std::filesystem::path path; ~Unlock() { chflags(path.c_str(),0); } } unlock{article};
+  CHECK_THROWS(writer.apply(fixture.proposal_id,{.allow_overwrite_user_file=true}));
+  CHECK(read_file(article)=="Locked user file\n");
+  CHECK(database.scalar_text("SELECT status FROM proposals")=="approved");
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM article_fts")==0);
+  no_active_artifacts(root);
+}
+#endif
+#endif
+
+TEST_CASE("restore refuses damaged history or changed rendering paths and reports retained unowned artifacts", "[apply-recovery]") {
+  const auto damage=GENERATE("snapshot","source","configuration");
+  CAPTURE(damage);
+  kc::test::TemporaryDirectory temporary;
+  const auto root=temporary.path()/"project";
+  const auto initialized=kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture=seed_create_proposal(root,database);
+  kc::vault::VaultWriter writer(root); kc::test::approve_preview(writer,fixture.proposal_id);
+  const auto applied=writer.apply(fixture.proposal_id);
+  const auto before=read_file(root/applied.vault_path);
+  if (std::string_view(damage)=="snapshot") database.execute("UPDATE article_snapshots SET content='corrupt snapshot'");
+  else if (std::string_view(damage)=="source") {
+    std::filesystem::permissions(root/fixture.imported.version.stored_path,std::filesystem::perms::owner_write,std::filesystem::perm_options::add);
+    write_file(root/fixture.imported.version.stored_path,"tampered source");
+  }
+  else {
+    auto config=kc::test::read_json(root/"kc.json"); config["vault"]["source_directory"]="_different_sources";
+    write_file(root/"kc.json",config.dump());
+  }
+  CHECK_THROWS(kc::vault::VaultWriter(root).restore_preview(applied.apply_run_id));
+  CHECK(read_file(root/applied.vault_path)==before);
+  const auto orphan=root/".knowledge-compiler/backups/legacy-unowned.md";
+  write_file(orphan,"Unknown ownership must be preserved\n");
+  const auto legacy_temp=root/"vault/user.md.tmp-legacy";
+  write_file(legacy_temp,"Unknown user staging content\n");
+  const auto inventory=writer.recovery_inventory();
+  CHECK(inventory.at("retained_artifacts").size()==2);
+  CHECK(read_file(orphan)=="Unknown ownership must be preserved\n");
+  CHECK(read_file(legacy_temp)=="Unknown user staging content\n");
+}
+
+#if !defined(_WIN32)
+TEST_CASE("post-exchange writes to a displaced inode are retained in the recovery archive", "[apply-recovery]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root=temporary.path()/"project";
+  const auto initialized=kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture=seed_create_proposal(root,database);
+  const auto article=root/"vault/Markov Chains.md";
+  write_file(article,"Original untracked content\n");
+  kc::vault::VaultWriter writer(root,[&](std::string_view point) {
+    if (point=="before_cleanup") {
+      const auto journal=kc::test::read_json(std::filesystem::directory_iterator(root/".knowledge-compiler/transactions")->path());
+      write_file(root/journal.at("temporary").get<std::string>(),"Editor wrote the displaced inode after commit\n");
+    }
+  });
+  const auto preview=writer.preview(fixture.proposal_id,{.allow_overwrite_user_file=true});
+  writer.approve(fixture.proposal_id,preview.token,{.allow_overwrite_user_file=true});
+  static_cast<void>(writer.apply(fixture.proposal_id,{.allow_overwrite_user_file=true}));
+  CHECK(read_file(article)==*preview.after);
+  const auto inventory=writer.recovery_inventory();
+  REQUIRE(inventory.at("conflict_archives").size()==1);
+  CHECK(read_file(root/inventory.at("conflict_archives")[0].get<std::string>())=="Editor wrote the displaced inode after commit\n");
+}
+
+TEST_CASE("keeping a recovery conflict preserves binary user bytes and rejects unowned temporary paths", "[apply-recovery]") {
+  const auto damage=GENERATE("binary","unowned");
+  kc::test::TemporaryDirectory temporary;
+  const auto root=temporary.path()/"project";
+  const auto initialized=kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture=seed_create_proposal(root,database);
+  const auto article=root/"vault/Markov Chains.md";
+  write_file(article,"Original untracked article\n");
+  kc::vault::VaultWriter writer(root);
+  const auto preview=writer.preview(fixture.proposal_id,{.allow_overwrite_user_file=true});
+  writer.approve(fixture.proposal_id,preview.token,{.allow_overwrite_user_file=true});
+  terminate_apply(root,fixture.proposal_id,"after_article_replace",true);
+  const auto journal_path=std::filesystem::directory_iterator(root/".knowledge-compiler/transactions")->path();
+  if (std::string_view(damage)=="unowned") {
+    const auto unrelated=root/"vault/Unrelated.md";
+    write_file(unrelated,"Do not delete this user-owned file\n");
+    auto journal=kc::test::read_json(journal_path); journal["temporary"]="vault/Unrelated.md";
+    write_file(journal_path,journal.dump());
+    CHECK_THROWS(kc::storage::keep_recovery_conflicts(root));
+    CHECK(read_file(unrelated)=="Do not delete this user-owned file\n");
+  } else {
+    const std::string bytes("user\0\xFF",6);
+    write_file(article,bytes);
+    CHECK_THROWS(kc::storage::Database(initialized.state_path));
+    CHECK_NOTHROW(kc::storage::keep_recovery_conflicts(root));
+    CHECK(read_file(article)==bytes);
+    CHECK(std::filesystem::is_directory(root/".knowledge-compiler/recovery-conflicts"));
+  }
+}
+#endif
+
+TEST_CASE("restoring identical A bytes after B never resurrects an old approval or restore token", "[apply-recovery]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root=temporary.path()/"project";
+  const auto initialized=kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture=seed_create_proposal(root,database);
+  kc::vault::VaultWriter writer(root); kc::test::approve_preview(writer,fixture.proposal_id);
+  const auto first=writer.apply(fixture.proposal_id);
+  const auto bytes=read_file(root/first.vault_path);
+  const auto old=seed_update_proposal(database,fixture.page_id,first.article_id,"Old pending update awaiting apply.");
+  const auto approval=writer.preview(old); REQUIRE(approval.valid); writer.approve(old,approval.token);
+  const auto second=seed_update_proposal(database,fixture.page_id,first.article_id,"Intervening B revision.");
+  kc::test::approve_preview(writer,second); static_cast<void>(writer.apply(second));
+  const auto restoring=writer.restore_preview(first.apply_run_id);
+  static_cast<void>(writer.restore(first.apply_run_id,restoring.at("preview_sha256").get<std::string>()));
+  REQUIRE(read_file(root/first.vault_path)==bytes);
+  const auto after=writer.preview(old);
+  CHECK(after.token!=approval.token);
+  CHECK(after.matches_approval==false);
+  CHECK_THROWS(writer.apply(old));
+  const auto repeated=writer.restore_preview(first.apply_run_id);
+  static_cast<void>(writer.restore(first.apply_run_id,repeated.at("preview_sha256").get<std::string>()));
+  REQUIRE(read_file(root/first.vault_path)==bytes);
+  CHECK_THROWS(writer.restore(first.apply_run_id,repeated.at("preview_sha256").get<std::string>()));
+}
+
+#if !defined(_WIN32)
+TEST_CASE("a concurrent project opener reconciles committed cleanup without racing the writer", "[apply-recovery]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root=temporary.path()/"project";
+  const auto initialized=kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture=seed_create_proposal(root,database);
+  pid_t child=-1;
+  kc::vault::VaultWriter writer(root,[&](std::string_view point) {
+    if (point!="before_cleanup") return;
+    int ready[2]{}; REQUIRE(pipe(ready)==0);
+    child=fork(); REQUIRE(child>=0);
+    if (child==0) {
+      close(ready[0]);
+      const char signal='r';
+      if (write(ready[1],&signal,1)!=1) _exit(78);
+      close(ready[1]);
+      try {
+        kc::storage::Database opened(initialized.state_path);
+        if (opened.scalar_integer("SELECT COUNT(*) FROM apply_runs")!=1 ||
+            opened.scalar_text("SELECT status FROM proposals")!="applied") _exit(78);
+      } catch (...) { _exit(78); }
+      _exit(77);
+    }
+    close(ready[1]);
+    char signal=0; REQUIRE(read(ready[0],&signal,1)==1); close(ready[0]);
+    // Return to cleanup while the new opener is attempting project recovery.
+  });
+  kc::test::approve_preview(writer,fixture.proposal_id);
+  const auto applied=writer.apply(fixture.proposal_id);
+  int status=0; REQUIRE(waitpid(child,&status,0)==child); REQUIRE(WIFEXITED(status)); REQUIRE(WEXITSTATUS(status)==77);
+  CHECK(read_file(root/applied.vault_path)==database.scalar_text("SELECT body FROM article_fts"));
+  no_active_artifacts(root);
+}
+#endif

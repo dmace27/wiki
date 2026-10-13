@@ -788,6 +788,21 @@ int main(const int argc, char** argv) {
       "--allow-overwrite-user-file", allow_overwrite_user_file,
       "Explicitly permit replacing an untracked colliding Markdown file");
 
+  auto* history_command = app.add_subcommand("history", "Inspect applied revisions and restore audit history");
+  history_command->fallthrough();
+  std::string history_article;
+  history_command->add_option("ARTICLE_ID",history_article,"Optional article ID");
+  auto* restore_command = app.add_subcommand("restore", "Preview or restore an exact historical article revision");
+  restore_command->fallthrough();
+  std::string restore_run_id;
+  std::string restore_token;
+  restore_command->add_option("APPLY_RUN_ID",restore_run_id)->required();
+  restore_command->add_option("--preview",restore_token,"Execute only this exact reviewed restore token");
+  auto* recover_command = app.add_subcommand("recover", "Recover interrupted operations or keep conflicting user edits");
+  recover_command->fallthrough();
+  bool keep_user_file = false;
+  recover_command->add_flag("--keep-user-file",keep_user_file,"Archive interrupted journal, preserve current user bytes and retain recovery artifacts");
+
   auto* search_command = app.add_subcommand(
       "search", "Search generated article titles, aliases, and body text");
   search_command->fallthrough();
@@ -1195,6 +1210,50 @@ int main(const int argc, char** argv) {
         std::cerr << "kc proposal list: unexpected error: " << error.what()
                   << '\n';
       }
+      return 6;
+    }
+  }
+
+  if (*history_command || *restore_command || *recover_command) {
+    const std::string command = *history_command ? "history" : *restore_command ? "restore" : "recover";
+    try {
+      discover_project_if_unspecified(project,*project_option,command);
+      nlohmann::json result;
+      if (*recover_command) {
+        if (keep_user_file) kc::storage::keep_recovery_conflicts(std::filesystem::absolute(project));
+        // Opening state performs automatic recovery under its write lock.
+        kc::vault::VaultWriter writer(project);
+        static_cast<void>(writer.history());
+        result = {{"recovered",true},{"kept_user_file",keep_user_file},{"inventory",writer.recovery_inventory()}};
+      } else {
+        kc::vault::VaultWriter writer(project);
+        if (*history_command) {
+          result = writer.history(history_article.empty() ? std::nullopt : std::optional<kc::domain::ArticleId>{{history_article}});
+        } else if (restore_token.empty()) {
+          result = writer.restore_preview(kc::domain::RunId{restore_run_id});
+        } else {
+          const auto restored = writer.restore(kc::domain::RunId{restore_run_id},restore_token);
+          result = {{"restore_run_id",restored.value},{"apply_run_id",restore_run_id}};
+        }
+      }
+      if (json_output) std::cout << nlohmann::json{{"ok",true},{"command",command},{"result",result}}.dump() << '\n';
+      else if (!quiet) {
+        if (*restore_command && restore_token.empty()) {
+          std::cout << "Restore destination: " << result.at("destination").get<std::string>()
+              << "\nExact historical Markdown\n" << result.at("after").get<std::string>()
+              << "\nRestore diff (includes removal of current user edits)\n" << result.at("diff").get<std::string>()
+              << "\nRestore exact preview: " << project_command(project) << " restore " << restore_run_id
+              << " --preview " << result.at("preview_sha256").get<std::string>() << '\n';
+        } else std::cout << result.dump(2) << '\n';
+      }
+      return 0;
+    } catch (const kc::vault::VaultError& error) {
+      if (json_output) std::cout << error_json(command,vault_error_code(error.kind()),error.what()).dump() << '\n';
+      else std::cerr << "kc " << command << ": " << error.what() << '\n';
+      return vault_exit_code(error.kind());
+    } catch (const std::exception& error) {
+      if (json_output) std::cout << error_json(command,"state_error",error.what()).dump() << '\n';
+      else std::cerr << "kc " << command << ": " << error.what() << '\n';
       return 6;
     }
   }

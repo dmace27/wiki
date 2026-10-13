@@ -509,3 +509,29 @@ TEST_CASE("proposal preview validates frozen uncited model context before approv
   CHECK(database.scalar_text("SELECT status FROM proposals") == "pending");
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 0);
 }
+
+#if !defined(_WIN32)
+TEST_CASE("project open reconciles dead extraction runs but preserves live adapters and historical images", "[apply-recovery][integrity]") {
+  Fixture fixture;
+  {
+    ProcessRace race([&](auto pause) {
+      force_extract(fixture,pause,"abandoned staging image");
+      return true;
+    });
+    // The child is alive inside a renderer with its lease held. An independent
+    // project opener must preserve its running status and private staging.
+    kc::storage::Database live(fixture.initialized.state_path);
+    CHECK(live.scalar_integer("SELECT COUNT(*) FROM extraction_runs WHERE status='running'")==1);
+    CHECK_FALSE(std::filesystem::is_empty(fixture.root/".knowledge-compiler/extraction-staging"));
+    // Destruction SIGKILLs the paused adapter; no extraction catch/cleanup runs.
+  }
+  kc::storage::Database restarted(fixture.initialized.state_path);
+  CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM extraction_runs WHERE status='running'")==0);
+  CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM extraction_runs WHERE status='failed'")==1);
+  CHECK(std::filesystem::is_empty(fixture.root/".knowledge-compiler/extraction-staging"));
+  CHECK(kc::source_import::sha256_file(fixture.root / *fixture.page.image_path)==kc::source_import::sha256_text("original image"));
+  CHECK_NOTHROW(kc::review::ReviewService(fixture.root).review_extraction(fixture.imported.source.source_id));
+  force_extract(fixture);
+  CHECK(restarted.scalar_integer("SELECT COUNT(*) FROM extraction_runs WHERE status='completed'")==2);
+}
+#endif

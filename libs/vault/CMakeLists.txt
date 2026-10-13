@@ -16,7 +16,7 @@ target_include_directories(
 
 target_link_libraries(
   kc_vault
-  PUBLIC kc::domain
+  PUBLIC kc::domain kc::storage
   PRIVATE
     kc::updates
     kc::import

@@ -126,8 +126,8 @@ ArticleBase load_base(sqlite3* connection, const std::filesystem::path& root,
   Query row(connection,
       "SELECT r.apply_run_id, p.payload_json, r.managed_sha256, r.new_content_sha256, a.vault_path "
       "FROM apply_runs r JOIN proposals p ON p.proposal_id = r.proposal_id "
-      "JOIN articles a ON a.article_id = r.article_id WHERE r.article_id = ? "
-      "ORDER BY r.rowid DESC LIMIT 1", article_id.value);
+      "JOIN articles a ON a.article_id = r.article_id WHERE r.article_id = ? AND r.apply_run_id = a.current_apply_run_id "
+      "LIMIT 1", article_id.value);
   if (!row.next()) {
     throw std::invalid_argument("article has no applied structured history; restore history before updating");
   }

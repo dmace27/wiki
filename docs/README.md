@@ -18,6 +18,7 @@ relevant document and explain the migration.
 | [Extraction integrity](EXTRACTION_INTEGRITY.md) | Canonical path ownership, retained evidence hashes, UTF-8, and Task 6 race verification. |
 | [Accumulated knowledge](ACCUMULATED_KNOWLEDGE.md) | Additive updates, explicit regeneration, base revisions, and Task 7 verification. |
 | [Review experience](REVIEW_EXPERIENCE.md) | Exact rendered previews, approval tokens, OCR acceptance/opening, and Task 8 verification. |
+| [Apply recovery](APPLY_RECOVERY.md) | Durable journals, crash reconciliation, external editor protection, history/restore, and Task 9 verification. |
 | [State database](STATE_DATABASE.md) | SQLite design, migration rules, and initial DDL. |
 | [Task 3 verification](TASK_3_VERIFICATION.md) | Automated end-to-end evidence and manual OCR/Obsidian test record. |
 

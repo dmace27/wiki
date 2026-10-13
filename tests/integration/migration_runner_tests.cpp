@@ -18,9 +18,9 @@ TEST_CASE("initial migration creates the documented database and is idempotent")
   const auto first = migrations.apply_all();
   const auto second = migrations.apply_all();
 
-  REQUIRE(first.applied_versions == std::vector<int>{1, 2, 3, 4, 5, 6});
+  REQUIRE(first.applied_versions == std::vector<int>{1, 2, 3, 4, 5, 6, 7});
   CHECK(second.applied_versions.empty());
-  CHECK(database.scalar_integer("SELECT COUNT(*) FROM schema_migrations;") == 6);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM schema_migrations;") == 7);
   CHECK(database.scalar_integer(
             "SELECT COUNT(*) FROM pragma_table_info('proposals') "
             "WHERE name = 'review_reason';") == 1);
@@ -73,7 +73,7 @@ TEST_CASE("proposal review migration upgrades an existing version-one project") 
       "'2026-08-11T12:00:00Z')");
 
   kc::storage::MigrationRunner upgrade(database, KC_TEST_MIGRATIONS_DIR);
-  CHECK(upgrade.apply_all().applied_versions == std::vector<int>{2, 3, 4, 5, 6});
+  CHECK(upgrade.apply_all().applied_versions == std::vector<int>{2, 3, 4, 5, 6, 7});
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals") == 1);
   CHECK(database.scalar_integer(
             "SELECT COUNT(*) FROM pragma_table_info('proposals') "
@@ -109,7 +109,7 @@ TEST_CASE("source identity migration preserves historical evidence and latest or
       "INSERT INTO apply_runs VALUES ('apply_old','prp_old','art_old',NULL,'hash',NULL,'t');");
 
   kc::storage::MigrationRunner upgrade(database, KC_TEST_MIGRATIONS_DIR);
-  CHECK(upgrade.apply_all().applied_versions == std::vector<int>{3, 4, 5, 6});
+  CHECK(upgrade.apply_all().applied_versions == std::vector<int>{3, 4, 5, 6, 7});
   CHECK(upgrade.apply_all().applied_versions.empty());
   CHECK(database.scalar_integer("PRAGMA foreign_keys") == 1);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM pragma_foreign_key_check") == 0);
@@ -156,7 +156,7 @@ TEST_CASE("review migration preserves historical page rows and all foreign-key p
   const auto legacy_directory = temporary.path() / "legacy-migrations";
   std::filesystem::create_directory(legacy_directory);
   for (const auto& file : std::filesystem::directory_iterator(KC_TEST_MIGRATIONS_DIR)) {
-    if (file.path().filename().string().starts_with("006_")) continue;
+    if (file.path().filename().string().starts_with("006_") || file.path().filename().string().starts_with("007_")) continue;
     std::filesystem::copy_file(file.path(),legacy_directory / file.path().filename());
   }
   kc::storage::Database database(temporary.path() / "state.sqlite");
@@ -168,7 +168,7 @@ TEST_CASE("review migration preserves historical page rows and all foreign-key p
   database.execute("INSERT INTO proposals(proposal_id,operation,payload_json,status,created_at) VALUES ('prp_legacy','create_article','{}','rejected','t');");
   database.execute("INSERT INTO proposal_citations VALUES ('prp_legacy','example',0,'pg_legacy',0,3,'old');");
   database.execute("INSERT INTO proposal_evidence VALUES ('prp_legacy','pg_legacy',12,'texthash','imagehash','sourcehash');");
-  REQUIRE(kc::storage::MigrationRunner(database,KC_TEST_MIGRATIONS_DIR).apply_all().applied_versions == std::vector<int>{6});
+  REQUIRE(kc::storage::MigrationRunner(database,KC_TEST_MIGRATIONS_DIR).apply_all().applied_versions == std::vector<int>{6, 7});
   CHECK(database.scalar_integer("SELECT rowid FROM source_pages") == 27);
   CHECK(database.scalar_integer("SELECT evidence_revision FROM source_pages") == 12);
   CHECK(database.scalar_integer("SELECT is_current FROM source_pages") == 1);

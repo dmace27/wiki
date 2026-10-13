@@ -11,6 +11,7 @@
 #include "kc/domain/markdown.hpp"
 #include "kc/import/sha256.hpp"
 #include "kc/storage/database.hpp"
+#include "kc/storage/file_operation.hpp"
 #include "kc/storage/concept_identity.hpp"
 
 #include <nlohmann/json.hpp>
@@ -22,6 +23,7 @@
 #include <chrono>
 #include <cstdint>
 #include <fstream>
+#include <exception>
 #include <iomanip>
 #include <optional>
 #include <regex>
@@ -491,120 +493,6 @@ std::string read_file(const std::filesystem::path &path) {
   return content;
 }
 
-/// Replace `destination` with a complete sibling temporary file.
-///
-/// POSIX rename replaces an existing destination atomically. The C++
-/// `filesystem::rename` wrapper does not provide that behavior on Windows, so
-/// use the native replace flag there. Because callers always create the
-/// temporary file beside the destination, this remains a same-volume rename.
-void replace_with_temporary_file(const std::filesystem::path &temporary,
-                                 const std::filesystem::path &destination) {
-#if defined(_WIN32)
-  constexpr DWORD flags = MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH;
-  if (MoveFileExW(temporary.c_str(), destination.c_str(), flags) == 0) {
-    const auto error = std::error_code(static_cast<int>(GetLastError()),
-                                       std::system_category());
-    throw VaultError(VaultErrorKind::unsafe_write,
-                     "could not atomically replace vault file: " +
-                         error.message());
-  }
-#else
-  std::filesystem::rename(temporary, destination);
-#endif
-}
-
-/// Write a complete sibling and atomically replace the destination with it.
-void atomic_write(const std::filesystem::path &path,
-                  const std::string_view content) {
-  auto temporary = path;
-  temporary += ".tmp-" + domain::generate_prefixed_ulid("");
-  try {
-    {
-      std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-      if (!output) {
-        throw VaultError(VaultErrorKind::unsafe_write,
-                         "could not create temporary vault file");
-      }
-      output.write(content.data(),
-                   static_cast<std::streamsize>(content.size()));
-      output.flush();
-      if (!output) {
-        throw VaultError(VaultErrorKind::unsafe_write,
-                         "could not write complete temporary vault file");
-      }
-    }
-    replace_with_temporary_file(temporary, path);
-  } catch (...) {
-    std::error_code ignored;
-    std::filesystem::remove(temporary, ignored);
-    throw;
-  }
-}
-
-void copy_source(const std::filesystem::path &project_root,
-                 const std::filesystem::path &vault_root,
-                 const SourceReference &source) {
-  const auto retained = project_root / source.stored_path;
-  const auto destination = vault_root / source.vault_source_path;
-  if (!is_within(project_root, retained) ||
-      !std::filesystem::is_regular_file(retained) ||
-      std::filesystem::is_symlink(retained)) {
-    throw VaultError(VaultErrorKind::unsafe_write,
-                     "retained citation source is missing or unsafe");
-  }
-  if (source_import::sha256_file(retained) != source.source_sha256) {
-    throw VaultError(
-        VaultErrorKind::validation_failed,
-        "retained citation source does not match its recorded hash");
-  }
-  if (!is_within(vault_root, destination)) {
-    throw VaultError(VaultErrorKind::unsafe_write,
-                     "configured source destination escapes the vault");
-  }
-  std::filesystem::create_directories(destination.parent_path());
-  if (std::filesystem::exists(destination)) {
-    if (!std::filesystem::is_regular_file(destination) ||
-        std::filesystem::is_symlink(destination) ||
-        source_import::sha256_file(destination) != source.source_sha256) {
-      throw VaultError(VaultErrorKind::unsafe_write,
-                       "vault source copy exists with different content");
-    }
-    return;
-  }
-
-  auto temporary = destination;
-  temporary += ".tmp-" + domain::generate_prefixed_ulid("");
-  try {
-    std::filesystem::copy_file(retained, temporary);
-    if (source_import::sha256_file(temporary) != source.source_sha256) {
-      throw VaultError(VaultErrorKind::unsafe_write,
-                       "copied citation source failed hash verification");
-    }
-    std::filesystem::rename(temporary, destination);
-  } catch (...) {
-    std::error_code ignored;
-    std::filesystem::remove(temporary, ignored);
-    throw;
-  }
-}
-
-std::filesystem::path create_backup(const std::filesystem::path &project_root,
-                                    const domain::ProjectConfig &config,
-                                    const domain::ArticleId &article_id,
-                                    const domain::RunId &apply_run_id,
-                                    const std::string &previous_content) {
-  const auto relative = config.paths.cache / "backups" / article_id.value /
-                        (apply_run_id.value + ".md");
-  const auto path = project_root / relative;
-  if (!is_safe_relative(relative) || !is_within(project_root, path)) {
-    throw VaultError(VaultErrorKind::unsafe_write,
-                     "configured backup path escapes the project");
-  }
-  std::filesystem::create_directories(path.parent_path());
-  atomic_write(path, previous_content);
-  return relative;
-}
-
 void persist_success(storage::Database &database, const ProposalRecord &record,
                      const domain::ArticleId &article_id,
                      const std::filesystem::path &vault_path,
@@ -835,6 +723,16 @@ nlohmann::json verify_proposal_evidence(sqlite3* connection,
   return result;
 }
 
+/// Even a restore to identical historical bytes is a new publication event.
+/// Binding its commit marker prevents an old approval/restore token from
+/// becoming valid again when the active apply pointer cycles back (A-B-A).
+std::string latest_file_operation(sqlite3* connection, const domain::ArticleId& article) {
+  Statement row(connection,
+      "SELECT operation_id FROM file_operations WHERE article_id=? ORDER BY rowid DESC LIMIT 1");
+  row.bind_text(1,article.value);
+  return row.step()==SQLITE_ROW ? row.text(0) : "";
+}
+
 struct PreparedArticle {
   ProposalRecord record;
   CitationState citations;
@@ -988,6 +886,7 @@ PreparedArticle prepare_article(sqlite3* connection,
     const auto frozen = verify_proposal_evidence(connection, root, config, proposal_id);
     const nlohmann::json contract{{"proposal_id", proposal_id.value}, {"article_id", article_id.value},
         {"destination", domain::path_to_utf8(relative_vault_path)}, {"config", config},
+        {"last_file_operation",latest_file_operation(connection,article_id)},
         {"before_sha256", previous_content ? nlohmann::json(source_import::sha256_text(*previous_content)) : nlohmann::json(nullptr)},
         {"after_sha256", source_import::sha256_text(rendered.content)},
         {"allow_overwrite_user_file", options.allow_overwrite_user_file}, {"evidence", frozen}};
@@ -1002,6 +901,86 @@ void require_valid_preview(const ArticlePreview& preview) {
     throw VaultError(VaultErrorKind::validation_failed,
                      preview.issues.empty() ? "preview is invalid" : preview.issues.front().message);
   }
+}
+
+struct RestoreState {
+  domain::ArticleId article_id;
+  domain::ProposalId proposal_id;
+  std::filesystem::path destination;
+  std::optional<std::string> before;
+  std::string after;
+  std::string aliases;
+  std::string title;
+  std::string current_run;
+  std::string token;
+  std::vector<storage::FileCopy> copies;
+};
+
+/// Historical snapshots are exact approved bytes, never regenerated. Restore
+/// checks immutable evidence again and binds the user's current file into its
+/// review token so an old preview cannot clobber a newer edit.
+RestoreState prepare_restore(storage::Database& database, const std::filesystem::path& root,
+    const domain::ProjectConfig& config, const domain::RunId& run) {
+  if (!domain::is_valid_id(run.value,"run_")) throw VaultError(VaultErrorKind::validation_failed,"invalid apply run ID");
+  Statement row(database.native_handle(),
+      "SELECT r.article_id,r.proposal_id,a.vault_path,s.content,s.aliases,r.new_content_sha256,a.title,a.current_apply_run_id,s.vault_config "
+      "FROM apply_runs r JOIN articles a ON a.article_id=r.article_id "
+      "LEFT JOIN article_snapshots s ON s.apply_run_id=r.apply_run_id WHERE r.apply_run_id=?");
+  row.bind_text(1, run.value);
+  if (row.step() != SQLITE_ROW) throw VaultError(VaultErrorKind::proposal_not_found,"apply history does not exist");
+  if (row.is_null(3)) throw VaultError(VaultErrorKind::validation_failed,
+      "legacy apply has no exact post-apply snapshot; preserve its recorded backup for manual review");
+  if (nlohmann::json::parse(row.text(8)) != nlohmann::json(config).at("vault")) {
+    throw VaultError(VaultErrorKind::validation_failed,
+        "historical vault rendering configuration differs; restore that configuration before restoring its exact source links/markers");
+  }
+  RestoreState state;
+  state.article_id = {row.text(0)}; state.proposal_id = {row.text(1)};
+  state.destination = domain::path_from_utf8(row.text(2)); state.after = row.text(3);
+  state.aliases = row.text(4); state.title = row.text(6); state.current_run = row.text(7);
+  if (!is_safe_relative(state.destination) || !is_within(root / config.paths.vault, root / state.destination) ||
+      std::filesystem::is_symlink(root / state.destination)) {
+    throw VaultError(VaultErrorKind::unsafe_write,"restore destination is unsafe");
+  }
+  validate_portable_destination(root / state.destination);
+  if (!domain::is_valid_source_text(state.after) || source_import::sha256_text(state.after) != row.text(5)) {
+    throw VaultError(VaultErrorKind::validation_failed,"historical snapshot digest/encoding is corrupt");
+  }
+  storage::validate_concept_destination(database.native_handle(), state.destination, state.article_id);
+  if (std::filesystem::exists(root / state.destination)) state.before = read_file(root / state.destination);
+  if (state.before && !domain::is_valid_source_text(*state.before)) {
+    throw VaultError(VaultErrorKind::validation_failed,"current article encoding must be repaired before reviewed restoration");
+  }
+  const auto proposal = load_proposal(database.native_handle(),state.proposal_id);
+  const auto citations = load_citation_state(database.native_handle(), proposal, config);
+  validate_normalized_citations(proposal,citations);
+  for (const auto& [page,source] : citations.pages) {
+    static_cast<void>(page);
+    source_import::verify_retained_file(root / config.paths.sources,root / source.stored_path,source.source_sha256);
+    const auto dest = config.paths.vault / source.vault_source_path;
+    if (is_within(root / state.destination, root / dest) || is_within(root / dest, root / state.destination)) {
+      throw VaultError(VaultErrorKind::unsafe_write,"restore article overlaps source copy storage");
+    }
+    if (std::filesystem::exists(root / dest)) {
+      source_import::verify_retained_file(root / config.paths.vault,root / dest,source.source_sha256);
+    } else state.copies.push_back({source.stored_path,dest,source.source_sha256});
+  }
+  const auto evidence = verify_proposal_evidence(database.native_handle(),root,config,state.proposal_id);
+  const nlohmann::json binding{{"restore_run",run.value},{"article",state.article_id.value},
+      {"destination",domain::path_to_utf8(state.destination)}, {"config",config},
+      {"current_apply_run",state.current_run},
+      {"last_file_operation",latest_file_operation(database.native_handle(),state.article_id)}, {"before",state.before ? nlohmann::json(source_import::sha256_text(*state.before)) : nlohmann::json(nullptr)},
+      {"after",row.text(5)},{"aliases",state.aliases},{"evidence",evidence}};
+  state.token = source_import::sha256_text(binding.dump());
+  return state;
+}
+
+nlohmann::json restore_document(const RestoreState& state, const domain::RunId& run) {
+  return {{"apply_run_id",run.value},{"article_id",state.article_id.value},
+      {"current_apply_run_id",state.current_run},{"destination",domain::path_to_utf8(state.destination)},
+      {"before",state.before ? nlohmann::json(*state.before) : nlohmann::json(nullptr)},
+      {"after",state.after}, {"diff",rendered_diff(state.before.value_or(""),state.after,domain::path_to_utf8(state.destination))},
+      {"preview_sha256",state.token}};
 }
 
 } // namespace
@@ -1049,10 +1028,10 @@ nlohmann::json preview_json(const ArticlePreview& preview) {
       {"issues",issues}};
 }
 
-VaultWriter::VaultWriter(std::filesystem::path project_root)
+VaultWriter::VaultWriter(std::filesystem::path project_root, storage::DurableObserver observer)
     : project_root_(std::filesystem::absolute(std::move(project_root))
                         .lexically_normal()),
-      config_(read_config(project_root_)) {
+      config_(read_config(project_root_)), observer_(std::move(observer)) {
   if (!std::filesystem::is_regular_file(checked_state_path(project_root_, config_))) {
     throw VaultError(
         VaultErrorKind::invalid_project,
@@ -1144,56 +1123,72 @@ ApplyResult VaultWriter::apply(const domain::ProposalId &proposal_id,
     const auto article_id = prepared.article_id;
     const auto relative_vault_path = prepared.destination;
     const auto article_path = project_root_ / relative_vault_path;
-    const auto vault_root = project_root_ / config_.paths.vault;
     const auto& previous_content = prepared.before;
     const auto& rendered_content = prepared.after;
     const auto& effective_aliases = prepared.aliases;
     const auto& citation_state = prepared.citations;
 
-    // All cited sources are verified and copied before the article can expose
-    // links to them. Version IDs prevent later imports from changing a target.
-    for (const auto &[unused_page_id, source] : citation_state.pages) {
-      static_cast<void>(unused_page_id);
-      copy_source(project_root_, vault_root, source);
-    }
-
-    const auto apply_run_id = domain::generate_run_id();
-    std::optional<std::filesystem::path> backup_path;
-    std::optional<domain::Sha256> previous_sha256;
-    if (previous_content) {
-      previous_sha256 = source_import::sha256_text(*previous_content);
-      backup_path = create_backup(project_root_, config_, article_id,
-                                  apply_run_id, *previous_content);
-    }
-    const auto new_sha256 = source_import::sha256_text(rendered_content);
-
-    atomic_write(article_path, rendered_content);
-    try {
-      persist_success(database, record, article_id, relative_vault_path,
-                      apply_run_id, previous_sha256, new_sha256, backup_path,
-                      rendered_content, effective_aliases, config_.vault.generated_section_id);
-      application_transaction.commit();
-    } catch (...) {
-      // Restore filesystem state if the post-write database transaction cannot
-      // commit. The pre-write backup remains available for manual recovery.
-      try {
-        if (previous_content) {
-          atomic_write(article_path, *previous_content);
-        } else {
-          std::error_code error;
-          if (!std::filesystem::remove(article_path, error) || error) {
-            throw VaultError(VaultErrorKind::unsafe_write,
-                             "could not remove unrecorded new article");
-          }
-        }
-      } catch (...) {
-        throw VaultError(
-            VaultErrorKind::unsafe_write,
-            "database commit failed and automatic article recovery failed; "
-            "restore the recorded backup manually");
+    // Journal creation precedes backups/source copies/staging. Existing source
+    // copies are never listed as owned artifacts and survive a rollback.
+    std::vector<storage::FileCopy> copies;
+    for (const auto& [page, source] : citation_state.pages) {
+      static_cast<void>(page);
+      const auto destination = config_.paths.vault / source.vault_source_path;
+      if (!std::filesystem::exists(project_root_ / destination)) {
+        copies.push_back({source.stored_path, destination, source.source_sha256});
       }
-      throw;
     }
+    const auto apply_run_id = domain::generate_run_id();
+    const auto previous_sha256 = previous_content ? std::optional<domain::Sha256>{source_import::sha256_text(*previous_content)} : std::nullopt;
+    const auto new_sha256 = source_import::sha256_text(rendered_content);
+    storage::FileOperation files(project_root_, config_, apply_run_id.value,
+        relative_vault_path, previous_content, rendered_content, copies, observer_);
+    const auto backup_path = files.backup_path();
+    // Caught failures and process death follow the same recovery protocol.
+    // Destruction rolls SQLite back; the journal remains until a fresh open can
+    // inspect the authoritative commit marker under a new write transaction.
+    files.prepare();
+    files.replace();
+    if (observer_) observer_("before_database_publish");
+    persist_success(database, record, article_id, relative_vault_path,
+                    apply_run_id, previous_sha256, new_sha256, backup_path,
+                    rendered_content, effective_aliases, config_.vault.generated_section_id);
+    std::string aliases;
+    for (const auto& alias : effective_aliases) {
+      if (!aliases.empty()) aliases += '\n';
+      aliases += alias;
+    }
+    Statement snapshot(database.native_handle(),
+        "INSERT INTO article_snapshots(apply_run_id,content,aliases,vault_config) VALUES (?,?,?,?)");
+    snapshot.bind_text(1, apply_run_id.value);
+    snapshot.bind_text(2, rendered_content);
+    snapshot.bind_text(3, aliases);
+    snapshot.bind_text(4, nlohmann::json(config_).at("vault").dump());
+    static_cast<void>(snapshot.step());
+    Statement current(database.native_handle(),
+        "UPDATE articles SET current_apply_run_id=? WHERE article_id=?");
+    current.bind_text(1, apply_run_id.value); current.bind_text(2, article_id.value);
+    static_cast<void>(current.step());
+    Statement marker(database.native_handle(),
+        "INSERT INTO file_operations(operation_id,operation_kind,article_id,completed_at) VALUES (?,'apply',?,?)");
+    marker.bind_text(1, apply_run_id.value); marker.bind_text(2, article_id.value); marker.bind_text(3, utc_now());
+    static_cast<void>(marker.step());
+    if (observer_) observer_("after_database_publish");
+    if (observer_) observer_("before_database_commit");
+    // Check once more after publication work. Native exchange also checked the
+    // displaced bytes, so an editor's atomic save in the final rename gap is
+    // detected. Later saves after this check are user edits of a committed file.
+    if (read_file(article_path) != rendered_content) {
+      throw VaultError(VaultErrorKind::unsafe_write, "article changed before database commit; recovery will preserve user bytes");
+    }
+    application_transaction.commit();
+    if (observer_) observer_("after_database_commit");
+    // Cleanup also participates in writer serialization. A project opener may
+    // have already cleaned this committed journal; finish is idempotent, and
+    // no opener can read/delete it concurrently while this lock is held.
+    Transaction cleanup_transaction(database);
+    files.finish();
+    cleanup_transaction.commit();
 
     return {.apply_run_id = apply_run_id,
             .proposal_id = proposal_id,
@@ -1201,20 +1196,138 @@ ApplyResult VaultWriter::apply(const domain::ProposalId &proposal_id,
             .vault_path = relative_vault_path,
             .backup_path = backup_path,
             .content_sha256 = new_sha256};
-  } catch (const VaultError &) {
-    throw;
-  } catch (const storage::StorageError &error) {
-    throw VaultError(VaultErrorKind::state_error,
-                     "could not apply proposal state: " +
-                         std::string(error.what()));
-  } catch (const std::filesystem::filesystem_error &error) {
-    throw VaultError(VaultErrorKind::unsafe_write,
-                     "vault filesystem operation failed: " +
-                         std::string(error.what()));
-  } catch (const std::exception &error) {
-    throw VaultError(VaultErrorKind::unsafe_write,
-                     "vault application failed: " + std::string(error.what()));
+  } catch (...) {
+    const auto original = std::current_exception();
+    try {
+      storage::Database recovery(checked_state_path(project_root_,config_));
+    } catch (const std::exception& recovery_error) {
+      throw VaultError(VaultErrorKind::unsafe_write,
+          "apply failed and recovery needs attention: " + std::string(recovery_error.what()));
+    }
+    try { std::rethrow_exception(original); }
+    catch (const VaultError&) { throw; }
+    catch (const storage::StorageError& error) {
+      throw VaultError(VaultErrorKind::state_error,"could not apply durable state: " + std::string(error.what()));
+    }
+    catch (const std::exception& error) {
+      throw VaultError(VaultErrorKind::unsafe_write,"vault application failed: " + std::string(error.what()));
+    }
   }
+}
+
+nlohmann::json VaultWriter::recovery_inventory() const {
+  storage::Database database(checked_state_path(project_root_,config_),storage::OpenMode::read_only);
+  std::set<std::string> recorded_backups;
+  Statement refs(database.native_handle(),
+      "SELECT backup_path FROM apply_runs WHERE backup_path IS NOT NULL UNION SELECT backup_path FROM restore_runs WHERE backup_path IS NOT NULL");
+  while (refs.step()==SQLITE_ROW) recorded_backups.insert(refs.text(0));
+  auto retained = nlohmann::json::array();
+  const auto backups = project_root_ / config_.paths.cache / "backups";
+  if (std::filesystem::is_directory(backups)) {
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(backups)) {
+      if (!entry.is_regular_file() || entry.is_symlink()) continue;
+      const auto relative=domain::path_to_utf8(entry.path().lexically_relative(project_root_));
+      if (!recorded_backups.contains(relative)) retained.push_back({{"path",relative},{"kind","unreferenced_backup"}});
+    }
+  }
+  const auto vault=project_root_/config_.paths.vault;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(vault)) {
+    if (!entry.is_regular_file() || entry.is_symlink()) continue;
+    const auto name=entry.path().filename().string();
+    if (name.find(".tmp-")!=std::string::npos || name.find(".kc-")!=std::string::npos) {
+      retained.push_back({{"path",domain::path_to_utf8(entry.path().lexically_relative(project_root_))},{"kind","unowned_or_legacy_temporary"}});
+    }
+  }
+  auto conflicts=nlohmann::json::array();
+  const auto archive=project_root_/config_.paths.cache/"recovery-conflicts";
+  if (std::filesystem::is_directory(archive)) for (const auto& entry : std::filesystem::directory_iterator(archive)) {
+    if (entry.is_regular_file() && !entry.is_symlink()) conflicts.push_back(domain::path_to_utf8(entry.path().lexically_relative(project_root_)));
+  }
+  return {{"retained_artifacts",retained},{"conflict_archives",conflicts},
+      {"source_copy_policy","journal-owned uncommitted copies are removed; historical and unowned source copies are retained for citation/restore safety"}};
+}
+
+nlohmann::json VaultWriter::history(const std::optional<domain::ArticleId>& article) const {
+  storage::Database database(checked_state_path(project_root_,config_),storage::OpenMode::read_only);
+  Statement rows(database.native_handle(),
+      "SELECT r.apply_run_id,r.proposal_id,r.article_id,r.applied_at,r.backup_path,r.new_content_sha256,"
+      "a.current_apply_run_id=r.apply_run_id,s.apply_run_id IS NOT NULL FROM apply_runs r "
+      "JOIN articles a ON a.article_id=r.article_id LEFT JOIN article_snapshots s ON s.apply_run_id=r.apply_run_id "
+      "WHERE (?='' OR r.article_id=?) ORDER BY r.rowid");
+  rows.bind_text(1,article ? article->value : ""); rows.bind_text(2,article ? article->value : "");
+  auto revisions = nlohmann::json::array();
+  while (rows.step() == SQLITE_ROW) {
+    revisions.push_back({{"apply_run_id",rows.text(0)},{"proposal_id",rows.text(1)},{"article_id",rows.text(2)},
+        {"applied_at",rows.text(3)},{"backup_path",rows.is_null(4) ? nlohmann::json(nullptr) : nlohmann::json(rows.text(4))},
+        {"content_sha256",rows.text(5)},{"current",rows.integer(6)!=0},{"restorable",rows.integer(7)!=0}});
+  }
+  Statement restored(database.native_handle(),
+      "SELECT restore_run_id,article_id,from_apply_run_id,to_apply_run_id,restored_at,backup_path "
+      "FROM restore_runs WHERE (?='' OR article_id=?) ORDER BY rowid");
+  restored.bind_text(1,article ? article->value : ""); restored.bind_text(2,article ? article->value : "");
+  auto restores = nlohmann::json::array();
+  while (restored.step()==SQLITE_ROW) restores.push_back({{"restore_run_id",restored.text(0)},
+      {"article_id",restored.text(1)},{"from_apply_run_id",restored.text(2)}, {"to_apply_run_id",restored.text(3)},
+      {"restored_at",restored.text(4)},{"backup_path",restored.is_null(5) ? nlohmann::json(nullptr) : nlohmann::json(restored.text(5))}});
+  return {{"revisions",revisions},{"restores",restores}};
+}
+
+nlohmann::json VaultWriter::restore_preview(const domain::RunId& run) const {
+  storage::Database database(checked_state_path(project_root_,config_),storage::OpenMode::read_only);
+  database.execute("BEGIN");
+  return restore_document(prepare_restore(database,project_root_,config_,run),run);
+}
+
+domain::RunId VaultWriter::restore(const domain::RunId& run, const std::string& token) try {
+  storage::Database database(checked_state_path(project_root_,config_));
+  Transaction transaction(database);
+  const auto state = prepare_restore(database,project_root_,config_,run);
+  if (token.empty() || token != state.token) throw VaultError(VaultErrorKind::validation_failed,
+      "restore requires its exact current --preview token; inspect removals and current user bytes first");
+  const auto id = domain::generate_run_id();
+  storage::FileOperation files(project_root_,config_,id.value,state.destination,state.before,state.after,state.copies,observer_);
+  files.prepare(); files.replace();
+  if (observer_) observer_("before_database_publish");
+  Statement current(database.native_handle(),
+      "UPDATE articles SET current_apply_run_id=?,content_sha256=?,updated_at=? WHERE article_id=?");
+  current.bind_text(1,run.value); current.bind_text(2,source_import::sha256_text(state.after));
+  current.bind_text(3,utc_now()); current.bind_text(4,state.article_id.value); static_cast<void>(current.step());
+  Statement clear(database.native_handle(),"DELETE FROM article_citations WHERE article_id=?");
+  clear.bind_text(1,state.article_id.value); static_cast<void>(clear.step());
+  Statement citations(database.native_handle(),
+      "INSERT INTO article_citations SELECT DISTINCT ?,section_key,block_index,page_id FROM proposal_citations WHERE proposal_id=?");
+  citations.bind_text(1,state.article_id.value); citations.bind_text(2,state.proposal_id.value); static_cast<void>(citations.step());
+  Statement clear_fts(database.native_handle(),"DELETE FROM article_fts WHERE article_id=?");
+  clear_fts.bind_text(1,state.article_id.value); static_cast<void>(clear_fts.step());
+  Statement fts(database.native_handle(),"INSERT INTO article_fts(article_id,title,aliases,body) VALUES (?,?,?,?)");
+  fts.bind_text(1,state.article_id.value); fts.bind_text(2,state.title); fts.bind_text(3,state.aliases); fts.bind_text(4,state.after); static_cast<void>(fts.step());
+  Statement marker(database.native_handle(),
+      "INSERT INTO file_operations VALUES (?,'restore',?,?)");
+  marker.bind_text(1,id.value); marker.bind_text(2,state.article_id.value); marker.bind_text(3,utc_now()); static_cast<void>(marker.step());
+  Statement audit(database.native_handle(),"INSERT INTO restore_runs VALUES (?,?,?,?,?,?,?,?)");
+  audit.bind_text(1,id.value); audit.bind_text(2,state.article_id.value);
+  if (state.current_run.empty()) audit.bind_null(3); else audit.bind_text(3,state.current_run);
+  audit.bind_text(4,run.value);
+  if (state.before) audit.bind_text(5,source_import::sha256_text(*state.before)); else audit.bind_null(5);
+  audit.bind_text(6,source_import::sha256_text(state.after));
+  if (files.backup_path()) audit.bind_text(7,domain::path_to_utf8(*files.backup_path())); else audit.bind_null(7);
+  audit.bind_text(8,utc_now()); static_cast<void>(audit.step());
+  if (observer_) observer_("after_database_publish");
+  if (observer_) observer_("before_database_commit");
+  if (read_file(project_root_ / state.destination) != state.after) throw VaultError(VaultErrorKind::unsafe_write,"article changed before restore commit; recover and review again");
+  transaction.commit();
+  if (observer_) observer_("after_database_commit");
+  Transaction cleanup_transaction(database);
+  files.finish();
+  cleanup_transaction.commit();
+  return id;
+} catch (...) {
+  const auto original = std::current_exception();
+  try { storage::Database recovery(checked_state_path(project_root_,config_)); }
+  catch (const std::exception& error) {
+    throw VaultError(VaultErrorKind::unsafe_write,"restore failed and recovery needs attention: " + std::string(error.what()));
+  }
+  std::rethrow_exception(original);
 }
 
 } // namespace kc::vault

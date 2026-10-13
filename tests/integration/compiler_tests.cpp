@@ -1122,6 +1122,7 @@ TEST_CASE("base revision prevents old approvals even when applied content return
       "SELECT '" + competing + "',article_id,operation,payload_json,'applied','t' FROM proposals WHERE status = 'applied'");
   fixture.database.execute("INSERT INTO apply_runs(apply_run_id,proposal_id,article_id,new_content_sha256,managed_sha256,applied_at) "
       "SELECT '" + kc::domain::generate_run_id().value + "','" + competing + "',article_id,new_content_sha256,managed_sha256,'t' FROM apply_runs ORDER BY rowid LIMIT 1");
+  fixture.database.execute("UPDATE articles SET current_apply_run_id=(SELECT apply_run_id FROM apply_runs ORDER BY rowid DESC LIMIT 1)");
   CHECK_THROWS_AS(fixture.writer.apply(proposal.proposal_id), kc::vault::VaultError);
   CHECK(read_article(fixture.article_path) == original);
   CHECK(fixture.database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 2);
@@ -1135,7 +1136,7 @@ TEST_CASE("legacy proposals without bases and missing applied history cannot sil
   CHECK_THROWS_AS(kc::test::approve_preview(fixture.writer, proposal.proposal_id), kc::vault::VaultError);
   fixture.database.execute("UPDATE proposals SET status = 'approved' WHERE status = 'pending'");
   CHECK_THROWS_AS(fixture.writer.apply(proposal.proposal_id), kc::vault::VaultError);
-  fixture.database.execute("DELETE FROM apply_runs");
+  fixture.database.execute("DELETE FROM article_snapshots; UPDATE articles SET current_apply_run_id=NULL; DELETE FROM apply_runs");
   CHECK_THROWS_AS(fixture.update(fixture.semester_a.source.source_id), kc::compiler::CompilerError);
 }
 

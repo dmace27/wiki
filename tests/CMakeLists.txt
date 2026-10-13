@@ -36,6 +36,7 @@ target_link_libraries(
     kc::search
     kc::storage
     kc::vault
+    kc::updates
     yaml-cpp::yaml-cpp
     nlohmann_json_schema_validator::validator
     kc_project_options

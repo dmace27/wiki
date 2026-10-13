@@ -79,7 +79,7 @@ inline void validate_project_paths(const std::filesystem::path& root,
   // Validate promised children too: initialization must never follow a
   // pre-existing pages/backups/staging symlink outside cache ownership.
   for (const auto* child : {"pages", "backups", "logs", "import-staging",
-                            "extraction-staging"}) {
+                            "extraction-staging", "transactions", "recovery-conflicts", "extraction-leases"}) {
     const auto directory = cache / child;
     if (!is_within(cache, directory) || is_within(directory, state)) {
       throw std::invalid_argument("cache subdirectory escapes cache ownership or contains state");

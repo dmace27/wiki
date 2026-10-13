@@ -16,6 +16,7 @@ add_library(kc_domain STATIC
   src/id.cpp
   src/json.cpp
   src/markdown.cpp
+  src/sha256.cpp
   src/schema.cpp
   src/text.cpp
   src/types.cpp

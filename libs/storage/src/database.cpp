@@ -1,4 +1,5 @@
 #include "kc/storage/database.hpp"
+#include "kc/storage/file_operation.hpp"
 
 #include <sqlite3.h>
 
@@ -40,7 +41,7 @@ class Statement {
 
 }  // namespace
 
-Database::Database(const std::filesystem::path& path, const OpenMode mode) {
+Database::Database(const std::filesystem::path& path, const OpenMode mode, const bool reconcile_project) {
   // FULLMUTEX asks SQLite to serialize use of this connection across threads.
   const auto filename = path.string();
   const auto flags = (mode == OpenMode::read_only ? SQLITE_OPEN_READONLY
@@ -52,7 +53,18 @@ Database::Database(const std::filesystem::path& path, const OpenMode mode) {
     throw StorageError(message);
   }
   sqlite3_busy_timeout(connection_, 5'000);
-  execute("PRAGMA foreign_keys = ON;");
+  try {
+    execute("PRAGMA foreign_keys = ON;");
+    if (mode == OpenMode::read_write) {
+      // Publication markers must survive a power failure whenever vault bytes do.
+      execute("PRAGMA synchronous = FULL; PRAGMA fullfsync = ON; PRAGMA checkpoint_fullfsync = ON;");
+    }
+    if (reconcile_project) recover_on_open(*this, path, mode == OpenMode::read_only);
+  } catch (...) {
+    sqlite3_close(connection_);
+    connection_ = nullptr;
+    throw;
+  }
 }
 
 Database::~Database() {

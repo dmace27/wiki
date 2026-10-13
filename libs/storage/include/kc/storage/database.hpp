@@ -27,7 +27,8 @@ class Database {
  public:
   /// Open `path`. Read-write mode creates missing files; read-only mode
   /// refuses missing files and SQLite rejects every mutation.
-  explicit Database(const std::filesystem::path& path, OpenMode mode = OpenMode::read_write);
+  explicit Database(const std::filesystem::path& path, OpenMode mode = OpenMode::read_write,
+                    bool reconcile_project = true);
   /// Close the owned SQLite connection.
   ~Database();
 

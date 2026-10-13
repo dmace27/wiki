@@ -7,6 +7,7 @@
 #include "kc/domain/json.hpp"
 #include "kc/import/sha256.hpp"
 #include "kc/storage/database.hpp"
+#include "kc/storage/file_operation.hpp"
 
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
@@ -629,6 +630,7 @@ ExtractionResult Extractor::extract(
                                          : page_ids_by_number(existing);
 
   const auto run_id = domain::generate_run_id();
+  storage::ExtractionLease run_lease(project_root_ / config_.paths.cache, run_id.value);
   const auto extractor_name =
       source.kind == domain::SourceKind::pdf
           ? pdf_adapter_->name()

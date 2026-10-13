@@ -69,8 +69,8 @@ kc apply PROPOSAL_ID
 
 A token is a content/revision binding, not an authentication secret. It proves
 which deterministic rendering was approved; it does not prove semantic
-entailment, correctness, or that a human actually read every line. External
-editor locking during replacement and durable crash recovery remain task 9.
+entailment, correctness, or that a human actually read every line. Task 9 now supplies native displaced-byte verification, durable crash recovery,
+and reviewed historical restore; see [apply recovery](APPLY_RECOVERY.md).
 
 ## Untracked collisions and validation diagnostics
 

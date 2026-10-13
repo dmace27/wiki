@@ -17,13 +17,15 @@ An application:
 - commits article identity, citations, apply audit, proposal state, and FTS
   content together only after the filesystem write succeeds.
 
-Atomic article replacement uses same-directory rename semantics on POSIX and
-Windows `MoveFileExW` with replacement enabled, so updating an existing article
-does not depend on the destination being absent.
-
-If the database commit fails after the rename, the writer restores the backup
-(or removes a newly-created article), so an unrecorded application is not left
-in the user vault.
+Apply and restore publish a fully synced filesystem journal before backups,
+source copies or article staging. Native atomic exchange retains and verifies
+exact displaced user bytes; new files use exclusive publication. A SQLite commit
+marker records article/citation/proposal/audit/snapshot/FTS publication together.
+Caught failures and process death use the same restart recovery; conflicting
+external edits remain untouched and require explicit review. Existing source
+copies and committed backups remain history. See the
+[durability and recovery protocol](../../docs/APPLY_RECOVERY.md) for supported
+systems, failure behavior, reconciliation and tests.
 
 Approval and apply share the [concept identity rules](../../docs/CONCEPT_IDENTITY.md).
 Updates retain stored title/slugs/paths, including legacy case-only payloads.
@@ -58,3 +60,13 @@ inspected SHA-256 token. Any changed rendering requires renewed approval.
 Referenced extraction pages are retained; corrections/forced retries publish
 new current identities rather than rewriting citation history.
 See [exact previews and provenance-preserving review](../../docs/REVIEW_EXPERIENCE.md).
+
+## Task 9 history and restore
+
+`history` lists applied snapshots and restore audit records. `restore` first
+shows exact historical Markdown and a diff against current user bytes; executing
+it requires that preview token. It restores content, citations, aliases/FTS,
+and the active structured revision in one journaled operation. Older applied
+proposals remain immutable history. Updates load the active pointer so a restore
+cannot leave accumulation based on a later, inactive apply. Migration 007 adds
+commit markers, full snapshots, the active pointer, and append-only restore audit.

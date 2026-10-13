@@ -1,8 +1,10 @@
 #pragma once
 
 #include "kc/domain/types.hpp"
+#include "kc/storage/file_operation.hpp"
 
 #include <filesystem>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -59,7 +61,8 @@ struct ApplyResult {
 /// records recovery/audit state, and indexes only the committed new content.
 class VaultWriter {
 public:
-  explicit VaultWriter(std::filesystem::path project_root);
+  explicit VaultWriter(std::filesystem::path project_root,
+                       storage::DurableObserver observer = {});
 
   [[nodiscard]] ArticlePreview preview(const domain::ProposalId& proposal_id,
                                        const ApplyOptions& options = {}) const;
@@ -73,9 +76,22 @@ public:
   [[nodiscard]] ApplyResult apply(const domain::ProposalId &proposal_id,
                                   const ApplyOptions &options = {});
 
+  /// Report retained legacy/unowned artifacts without guessing ownership.
+  [[nodiscard]] nlohmann::json recovery_inventory() const;
+
+  /// Post-apply history, with explicit active revision and exact snapshots.
+  [[nodiscard]] nlohmann::json history(const std::optional<domain::ArticleId>& article = std::nullopt) const;
+  /// Read-only restore inspection; token binds target revision and current bytes.
+  [[nodiscard]] nlohmann::json restore_preview(const domain::RunId& apply_run_id) const;
+  /// Restore the inspected historical Markdown, normalized citations, active
+  /// audit pointer and FTS together through the same durable file protocol.
+  [[nodiscard]] domain::RunId restore(const domain::RunId& apply_run_id,
+                                     const std::string& preview_token);
+
 private:
   std::filesystem::path project_root_;
   domain::ProjectConfig config_;
+  storage::DurableObserver observer_;
 };
 
 } // namespace kc::vault

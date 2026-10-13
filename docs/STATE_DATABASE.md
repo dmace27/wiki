@@ -33,6 +33,9 @@ review state, audit history, and the local keyword index.
 | `proposal_evidence` | Revisions and hashes of every page supplied to generation. |
 | `proposal_citations` | Evidence attached to proposed generated blocks. |
 | `article_citations` | Evidence currently represented in an applied article. |
+| `file_operations` | Durable commit marker for a journaled apply or restore. |
+| `article_snapshots` | Exact post-apply Markdown, aliases, and vault rendering configuration. |
+| `restore_runs` | Append-only from/to revision audit and pre-restore backup. |
 | `apply_runs` | Vault-write revision, full/managed digests, and backup reference. |
 | `proposal_update_bases` | Applied base revision, managed digest, and additive/regeneration mode. |
 | `article_fts` | FTS5 search index over generated articles. |
@@ -71,6 +74,16 @@ retries create successors; historical citations continue to join the old rows.
 `proposal_approvals` binds the reviewed complete rendering and collision consent.
 Approval/apply match that token; revoke/reject clear unused approval snapshots.
 See [review contracts and verification](REVIEW_EXPERIENCE.md).
+
+Migration `007_durable_apply.sql` adds filesystem commit markers, exact post-apply
+snapshots, restore audit records and `articles.current_apply_run_id`. Migration
+backfills the active pointer but never fabricates unavailable historical bytes.
+Apply/restore publication updates the pointer and normalized citations/FTS in
+one FULL-synchronous SQLite transaction. Accumulation uses this active pointer
+rather than assuming the latest apply row remains active after a restore.
+The private filesystem journal is published before mutation, and project-open
+recovery checks its SQLite commit marker to choose rollback versus cleanup.
+See [durable apply, recovery and reviewed restoration](APPLY_RECOVERY.md).
 
 ## Initial migration
 

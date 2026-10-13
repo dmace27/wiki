@@ -157,3 +157,37 @@ and managed-region digest guard publication, approval, and apply. Manual notes
 belong outside the markers; managed edits require restoration and fresh review.
 See [update semantics, revision checks, and legacy recovery](ACCUMULATED_KNOWLEDGE.md)
 for the exact reconciliation and review JSON contracts.
+
+## Durable apply recovery and historical restore
+
+Migration 007 (`kc init`) adds durable journal commit markers and exact
+post-apply snapshots. Every project state open reconciles interrupted operations
+before inspecting/applying work. External saves are checked before replacement,
+against native exchanged bytes, and before SQLite publication; ambiguous
+recovery retains current user bytes and reports the journal for review.
+
+```bash
+kc history [ARTICLE_ID]
+kc restore APPLY_RUN_ID
+kc restore APPLY_RUN_ID --preview EXACT_RESTORE_SHA256
+kc recover
+kc recover --keep-user-file
+```
+
+`history --json` returns `revisions` and `restores`, including the active
+revision, snapshot availability and pre-restore backup. Restore without a token
+is read-only inspection, returning exact `before`, `after`, `diff`, destination,
+current/target IDs and `preview_sha256`. The executing form requires that exact
+fresh token and restores Markdown, normalized citations, audit pointer and FTS
+together; changes to current user bytes invalidate the token. It backs up any
+replaced user content. Legacy applies without snapshots remain auditable but
+cannot be regenerated as supposedly exact historical content.
+
+`recover` returns reconciliation status and an inventory of retained unowned
+backups/legacy temporaries/conflict archives. `--keep-user-file` is an explicit
+conflict acknowledgement: preserve the current file, archive the interrupted
+journal and binary kept/displaced bytes, retain recoverable sources/backups,
+and leave database state at its last commit. It never approves or applies work.
+Ordinary file and database errors use the existing error envelopes/exits.
+Read [the recovery protocol and guarantees](APPLY_RECOVERY.md) before manually
+editing recovery files or resolving a conflict.

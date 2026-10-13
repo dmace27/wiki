@@ -2,6 +2,7 @@
 add_library(kc_storage STATIC
   src/concept_identity.cpp
   src/database.cpp
+  src/file_operation.cpp
   src/migration_runner.cpp
   src/project_initializer.cpp
 )

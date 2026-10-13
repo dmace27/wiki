@@ -243,6 +243,21 @@ refuses to overwrite it. After reviewing that exact collision, the explicit
 `--allow-overwrite-user-file` flag permits replacement and still creates a
 recovery backup.
 
+Apply now journals and synchronizes backups, source copies, article replacement,
+and database publication. Interrupted operations recover when opening the project;
+conflicting external edits are preserved. Upgrade with `kc init` for migration 007.
+Inspect or restore exact historical revisions with explicit review:
+
+```bash
+./build/dev/apps/kc/kc history
+./build/dev/apps/kc/kc restore run_01J...
+./build/dev/apps/kc/kc restore run_01J... --preview SHA256_FROM_INSPECTION
+./build/dev/apps/kc/kc recover
+```
+
+See [durable apply and reviewed restoration](docs/APPLY_RECOVERY.md) for conflict
+recovery, retained artifacts, durability guarantees, and legacy snapshot limits.
+
 Search applied articles locally by title, alias, and generated Markdown body:
 
 ```bash
