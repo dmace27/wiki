@@ -1,10 +1,12 @@
 #include "kc/review/review_service.hpp"
+#include "kc/updates/article_updates.hpp"
 
 #include "kc/import/integrity.hpp"
 #include "kc/domain/text.hpp"
 #include "kc/domain/path.hpp"
 
 #include "kc/domain/json.hpp"
+#include "kc/domain/id.hpp"
 #include "kc/import/sha256.hpp"
 #include "kc/storage/database.hpp"
 #include "kc/storage/concept_identity.hpp"
@@ -387,7 +389,7 @@ ExtractionReview ReviewService::review_extraction(
     Statement statement(
         database.native_handle(),
         "SELECT page_id, page_number, image_path, text, text_status, text_sha256, image_sha256 "
-        "FROM source_pages WHERE source_version_id = ? ORDER BY page_number");
+        "FROM source_pages WHERE source_version_id = ? AND is_current = 1 ORDER BY page_number");
     statement.bind_text(1, source.version_id.value);
 
     ExtractionReview result{.source_id = source.source_id,
@@ -402,6 +404,7 @@ ExtractionReview ReviewService::review_extraction(
           .text_status = parse_text_status(statement.text(4))};
       if (!statement.is_null(2)) {
         page.image_path = domain::path_from_utf8(statement.text(2));
+        if (!statement.is_null(6)) page.image_sha256 = statement.text(6);
         if (!is_safe_relative(*page.image_path)) {
           throw ReviewError(
               ReviewErrorKind::state_error,
@@ -439,7 +442,8 @@ ExtractionReview ReviewService::review_extraction(
 
 PageCorrectionResult ReviewService::correct_page_text(
     const domain::SourceId& source_id, const std::uint32_t page_number,
-    std::string corrected_text) const {
+    std::string corrected_text, const std::optional<domain::PageId>& expected_page_id,
+    const std::optional<std::string>& expected_text_sha256) const {
   if (page_number == 0U) {
     throw ReviewError(ReviewErrorKind::invalid_input,
                       "page number must be at least 1");
@@ -462,8 +466,8 @@ PageCorrectionResult ReviewService::correct_page_text(
     }
     Statement page(
         database.native_handle(),
-        "SELECT page_id FROM source_pages WHERE source_version_id = ? "
-        "AND page_number = ?");
+        "SELECT page_id,text_sha256,text_status FROM source_pages WHERE source_version_id = ? "
+        "AND page_number = ? AND is_current = 1");
     page.bind_text(1, source.version_id.value);
     page.bind_integer(2, static_cast<std::int64_t>(page_number));
     if (page.step() != SQLITE_ROW) {
@@ -472,19 +476,38 @@ PageCorrectionResult ReviewService::correct_page_text(
                             std::to_string(page_number));
     }
     const domain::PageId page_id{page.text(0)};
+    if ((expected_page_id && *expected_page_id != page_id) ||
+        (expected_text_sha256 && *expected_text_sha256 != page.text(1))) {
+      throw ReviewError(ReviewErrorKind::invalid_state, "page changed during review; inspect it again");
+    }
 
-    // Proposals are immutable and their normalized offsets point into this
-    // exact text. A correction must therefore happen before compilation.
-    Statement references(
-        database.native_handle(),
+    if (page.text(2) == "reviewed" && page.text(1) == source_import::sha256_text(corrected_text)) {
+      transaction.commit();
+      return {.source_id = source.source_id, .source_version_id = source.version_id,
+              .page_id = page_id, .page_number = page_number, .text_sha256 = page.text(1)};
+    }
+    // Historical offsets and text remain unchanged, even for rejected work.
+    // Referenced pages get a new current identity; uncited pages can still be
+    // corrected in place, with a monotonic revision to invalidate in-flight work.
+    Statement references(database.native_handle(),
         "SELECT (SELECT COUNT(*) FROM proposal_citations WHERE page_id = ?1) + "
         "(SELECT COUNT(*) FROM proposal_evidence WHERE page_id = ?1)");
     references.bind_text(1, page_id.value);
     static_cast<void>(references.step());
+    auto corrected_page_id = page_id;
     if (references.integer(0) != 0) {
-      throw ReviewError(
-          ReviewErrorKind::invalid_state,
-          "page text cannot be corrected after it has been cited by a proposal");
+      corrected_page_id = domain::generate_page_id();
+      Statement retire(database.native_handle(), "UPDATE source_pages SET is_current = 0 WHERE page_id = ?");
+      retire.bind_text(1, page_id.value);
+      static_cast<void>(retire.step());
+      Statement copy(database.native_handle(),
+          "INSERT INTO source_pages(page_id,source_version_id,page_number,image_path,text,text_status,"
+          "text_sha256,image_sha256,evidence_revision,supersedes_page_id) "
+          "SELECT ?,source_version_id,page_number,image_path,text,text_status,text_sha256,image_sha256,"
+          "evidence_revision, page_id FROM source_pages WHERE page_id = ?");
+      copy.bind_text(1, corrected_page_id.value);
+      copy.bind_text(2, page_id.value);
+      static_cast<void>(copy.step());
     }
 
     const auto hash = source_import::sha256_text(corrected_text);
@@ -494,7 +517,7 @@ PageCorrectionResult ReviewService::correct_page_text(
         "evidence_revision = evidence_revision + 1, text_sha256 = ? WHERE page_id = ? AND source_version_id = ?");
     update.bind_text(1, corrected_text);
     update.bind_text(2, hash);
-    update.bind_text(3, page_id.value);
+    update.bind_text(3, corrected_page_id.value);
     update.bind_text(4, source.version_id.value);
     static_cast<void>(update.step());
     if (sqlite3_changes(database.native_handle()) != 1) {
@@ -504,7 +527,8 @@ PageCorrectionResult ReviewService::correct_page_text(
     transaction.commit();
     return {.source_id = source.source_id,
             .source_version_id = source.version_id,
-            .page_id = page_id,
+            .page_id = corrected_page_id,
+            .previous_page_id = corrected_page_id == page_id ? std::nullopt : std::optional<domain::PageId>{page_id},
             .page_number = page_number,
             .text_sha256 = hash};
   } catch (const ReviewError&) {
@@ -550,7 +574,7 @@ std::vector<ProposalSummary> ReviewService::list_proposals(
 }
 
 ProposalReview ReviewService::review_proposal(
-    const domain::ProposalId& proposal_id) const {
+    const domain::ProposalId& proposal_id, const vault::ApplyOptions& options) const {
   static_cast<void>(read_config(project_root_));
   try {
     storage::Database database(checked_state_path(project_root_, config_));
@@ -578,6 +602,11 @@ ProposalReview ReviewService::review_proposal(
         .summary = summary_from_row(proposal_row, proposal),
         .proposal = std::move(proposal)};
 
+    try {
+      result.update_changes = updates::review_changes(database.native_handle(), proposal_id, result.proposal);
+    } catch (const std::invalid_argument& error) {
+      throw ReviewError(ReviewErrorKind::invalid_state, error.what());
+    }
     Statement citations(
         database.native_handle(),
         "SELECT pc.section_key, pc.block_index, pc.page_id, pc.start_char, "
@@ -649,6 +678,7 @@ ProposalReview ReviewService::review_proposal(
       throw ReviewError(ReviewErrorKind::state_error,
                         "proposal has no normalized citation evidence");
     }
+    result.preview = vault::PreviewService(project_root_).preview(proposal_id, options);
     return result;
   } catch (const ReviewError&) {
     throw;
@@ -674,6 +704,7 @@ void ReviewService::reject_proposal(
   static_cast<void>(read_config(project_root_));
   try {
     storage::Database database(checked_state_path(project_root_, config_));
+    Transaction transaction(database);
     Statement exists(database.native_handle(),
                      "SELECT status FROM proposals WHERE proposal_id = ?");
     exists.bind_text(1, proposal_id.value);
@@ -681,15 +712,15 @@ void ReviewService::reject_proposal(
       throw ReviewError(ReviewErrorKind::proposal_not_found,
                         "proposal does not exist: " + proposal_id.value);
     }
-    if (exists.text(0) != "pending") {
+    if (exists.text(0) != "pending" && exists.text(0) != "approved") {
       throw ReviewError(ReviewErrorKind::invalid_state,
-                        "only a pending proposal can be rejected");
+                        "only pending or unused approved work can be rejected");
     }
 
     Statement update(
         database.native_handle(),
         "UPDATE proposals SET status = 'rejected', reviewed_at = ?, "
-        "review_reason = ? WHERE proposal_id = ? AND status = 'pending'");
+        "review_reason = ? WHERE proposal_id = ? AND status IN ('pending','approved')");
     update.bind_text(1, utc_now());
     if (reason) {
       update.bind_text(2, *reason);
@@ -700,8 +731,12 @@ void ReviewService::reject_proposal(
     static_cast<void>(update.step());
     if (sqlite3_changes(database.native_handle()) != 1) {
       throw ReviewError(ReviewErrorKind::invalid_state,
-                        "proposal is no longer pending");
+                        "proposal is no longer pending or approved");
     }
+    Statement clear(database.native_handle(), "DELETE FROM proposal_approvals WHERE proposal_id = ?");
+    clear.bind_text(1, proposal_id.value);
+    static_cast<void>(clear.step());
+    transaction.commit();
   } catch (const ReviewError&) {
     throw;
   } catch (const storage::StorageError& error) {
@@ -709,6 +744,83 @@ void ReviewService::reject_proposal(
                       "could not reject proposal: " +
                           std::string(error.what()));
   }
+}
+
+PageCorrectionResult ReviewService::accept_page_text(const domain::SourceId& source_id,
+                                                     const std::uint32_t page_number) const {
+  // Accept only the current text actually inspected. The expected page ID/hash
+  // passed to correction prevents a concurrent correction from being accepted.
+  const auto review = review_extraction(source_id);
+  const auto page = std::ranges::find_if(review.pages, [&](const auto& item) { return item.page_number == page_number; });
+  if (page == review.pages.end()) throw ReviewError(ReviewErrorKind::page_not_found, "page not found");
+  if (page->text_status == domain::TextStatus::failed) {
+    throw ReviewError(ReviewErrorKind::invalid_state, "failed extraction must be corrected before acceptance");
+  }
+  return correct_page_text(source_id, page_number, page->text, page->page_id,
+                           source_import::sha256_text(page->text));
+}
+
+void ReviewService::revoke_approval(const domain::ProposalId& proposal_id) const {
+  storage::Database database(checked_state_path(project_root_, config_));
+  Transaction transaction(database);
+  Statement update(database.native_handle(),
+      "UPDATE proposals SET status='pending',reviewed_at=NULL,review_reason=NULL WHERE proposal_id=? AND status='approved'");
+  update.bind_text(1, proposal_id.value);
+  static_cast<void>(update.step());
+  if (sqlite3_changes(database.native_handle()) != 1) {
+    throw ReviewError(ReviewErrorKind::invalid_state, "only an unused approval can be revoked");
+  }
+  Statement clear(database.native_handle(), "DELETE FROM proposal_approvals WHERE proposal_id = ?");
+  clear.bind_text(1, proposal_id.value);
+  static_cast<void>(clear.step());
+  transaction.commit();
+}
+
+std::filesystem::path ReviewService::page_image(const domain::SourceId& source_id,
+                                               const std::uint32_t page_number) const {
+  const auto review = review_extraction(source_id);
+  const auto page = std::ranges::find_if(review.pages, [&](const auto& item) { return item.page_number == page_number; });
+  if (page == review.pages.end()) throw ReviewError(ReviewErrorKind::page_not_found, "page not found");
+  if (!page->image_path) throw ReviewError(ReviewErrorKind::invalid_state, "page has no rendered image");
+  return std::filesystem::absolute(project_root_ / *page->image_path);
+}
+
+std::filesystem::path ReviewService::open_page_image(const domain::SourceId& source_id,
+    const std::uint32_t page_number, extraction::CommandRunner& runner) const {
+  const auto review = review_extraction(source_id);
+  const auto page = std::ranges::find_if(review.pages, [&](const auto& item) { return item.page_number == page_number; });
+  if (page == review.pages.end()) throw ReviewError(ReviewErrorKind::page_not_found, "page not found");
+  return open_page_image(*page, runner);
+}
+
+std::filesystem::path ReviewService::open_page_image(const ExtractionReviewPage& snapshot,
+    extraction::CommandRunner& runner) const {
+  if (!snapshot.image_path || !snapshot.image_sha256) {
+    throw ReviewError(ReviewErrorKind::invalid_state,"page has no verified rendered image");
+  }
+  const auto image = std::filesystem::absolute(project_root_ / *snapshot.image_path);
+  try {
+    source_import::verify_retained_file(project_root_ / config_.paths.cache, image, *snapshot.image_sha256);
+  } catch (const std::exception& error) {
+    throw ReviewError(ReviewErrorKind::invalid_state,error.what());
+  }
+#if defined(__APPLE__)
+  const std::string executable = "/usr/bin/open";
+  const std::vector<std::string> arguments{"--", domain::path_to_utf8(image)};
+#elif defined(_WIN32)
+  const std::string executable = "explorer.exe";
+  const std::vector<std::string> arguments{domain::path_to_utf8(image)};
+#else
+  const std::string executable = "xdg-open";
+  const std::vector<std::string> arguments{domain::path_to_utf8(image)};
+#endif
+  try {
+    if (runner.run(executable, arguments) == 0) return image;
+  } catch (const extraction::AdapterError&) {
+    // Keep the actionable verified path without relaying untrusted stderr.
+  }
+  throw ReviewError(ReviewErrorKind::invalid_state,
+      "default image viewer could not open the page; image: " + domain::path_to_utf8(image));
 }
 
 }  // namespace kc::review

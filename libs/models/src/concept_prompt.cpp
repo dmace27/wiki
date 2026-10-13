@@ -59,6 +59,19 @@ LanguageModelRequest build_concept_prompt(
       "page names without []#|^ separators. Never include kc:managed: markers. "
       "Aliases seed new articles only; existing frontmatter aliases are "
       "user-owned and preserved on updates.\n\n";
+  if (request.additive_update) {
+    user_prompt +=
+        "This is an additive update. Propose contributions supported by the "
+        "selected evidence. Previously approved blocks, examples, relationships, "
+        "and citations are retained deterministically by the compiler. Changed "
+        "claims coexist with the old claims for review; this request cannot "
+        "remove or rewrite previously approved content.\n\n";
+  } else if (request.operation == domain::ProposalOperation::update_article) {
+    user_prompt +=
+        "This is an explicit regeneration proposal. Produce the complete "
+        "replacement content from the selected evidence. Review will list "
+        "removed approved claims alongside replacement claims.\n\n";
+  }
   user_prompt += "Target:\n" + target.dump(2) + "\n\n";
   user_prompt += "Evidence pages:\n" + evidence.dump(2) + "\n\n";
   user_prompt +=

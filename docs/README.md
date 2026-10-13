@@ -16,6 +16,8 @@ relevant document and explain the migration.
 | [Markdown metadata](MARKDOWN_METADATA.md) | Domain-neutral YAML, user-owned aliases, literal content policy, and Task 4 verification. |
 | [Concept identity](CONCEPT_IDENTITY.md) | Canonical titles, Unicode matching, slug collisions, portable filenames, and Task 3 verification. |
 | [Extraction integrity](EXTRACTION_INTEGRITY.md) | Canonical path ownership, retained evidence hashes, UTF-8, and Task 6 race verification. |
+| [Accumulated knowledge](ACCUMULATED_KNOWLEDGE.md) | Additive updates, explicit regeneration, base revisions, and Task 7 verification. |
+| [Review experience](REVIEW_EXPERIENCE.md) | Exact rendered previews, approval tokens, OCR acceptance/opening, and Task 8 verification. |
 | [State database](STATE_DATABASE.md) | SQLite design, migration rules, and initial DDL. |
 | [Task 3 verification](TASK_3_VERIFICATION.md) | Automated end-to-end evidence and manual OCR/Obsidian test record. |
 

@@ -19,6 +19,7 @@ target_link_libraries(
     kc::domain
     kc::models
   PRIVATE
+    kc::updates
     kc::import
     kc::storage
     nlohmann_json::nlohmann_json

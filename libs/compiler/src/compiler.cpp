@@ -1,4 +1,5 @@
 #include "kc/compiler/compiler.hpp"
+#include "kc/updates/article_updates.hpp"
 
 #include "kc/import/integrity.hpp"
 #include "kc/domain/path.hpp"
@@ -454,7 +455,7 @@ class Compiler::Impl {
           "JOIN source_versions v "
           "ON v.source_version_id = p.source_version_id "
           "JOIN sources s ON s.source_id = v.source_id "
-          "WHERE s.archived_at IS NULL "
+          "WHERE s.archived_at IS NULL AND p.is_current = 1 "
           "AND v.rowid = (SELECT MAX(v2.rowid) FROM source_versions v2 "
           "WHERE v2.source_id = s.source_id) "
           "ORDER BY lower(s.display_name), s.source_id, p.page_number, "
@@ -566,6 +567,18 @@ class Compiler::Impl {
   [[nodiscard]] CompileResult compile(const CompileOptions& options) {
     validate_options(options);
     const auto target = find_article_target(options.concept_title);
+    std::optional<updates::ArticleBase> base;
+    if (target.article_id) {
+      try {
+        storage::Database database(state_path());
+        base = updates::load_base(database.native_handle(), project_root_, config_, *target.article_id);
+      } catch (const std::invalid_argument& error) {
+        throw CompilerError(CompilerErrorKind::validation_failed, error.what());
+      }
+    } else if (options.regenerate) {
+      throw CompilerError(CompilerErrorKind::invalid_concept,
+                          "--regenerate requires an existing applied article");
+    }
     auto canonical_options = options;
     canonical_options.concept_title = target.title;
     std::unordered_map<std::string, nlohmann::json> snapshots;
@@ -586,7 +599,8 @@ class Compiler::Impl {
         .operation = operation,
         .article_id = target.article_id,
         .concept_slug = target.slug,
-        .pages = std::move(pages)};
+        .pages = std::move(pages),
+        .additive_update = base.has_value() && !options.regenerate};
     models::ModelRunResult model_result;
     try {
       model_result = model_runner_->generate_concept(request);
@@ -618,15 +632,30 @@ class Compiler::Impl {
                       "proposal failed compiler validation"));
     }
 
+    // Validate model additions against only newly selected evidence first.
+    // Reconcile deterministically afterward: the model cannot remove old claims
+    // or borrow a historical citation it was never shown.
+    const auto selected_page_count = request.pages.size();
+    std::unordered_set<std::string> latest_pages;
+    for (const auto& page : request.pages) latest_pages.insert(page.page_id.value);
+    if (base && !options.regenerate) {
+      proposal = updates::accumulate(base->proposal, proposal);
+      retain_evidence(*base, request.pages, snapshots);
+      const auto accumulated = validator_.validate_response(proposal, request);
+      if (!accumulated) {
+        throw CompilerError(CompilerErrorKind::validation_failed,
+                            first_issue(accumulated.issues, "retained evidence is invalid"));
+      }
+    }
     const auto proposal_id = domain::generate_proposal_id();
     persist_proposal(proposal_id, model_result.run_id, proposal,
-                     target.article_id, snapshots);
+                     target.article_id, snapshots, latest_pages, base, options.regenerate);
     return {
         .proposal_id = proposal_id,
         .model_run_id = model_result.run_id,
         .operation = operation,
         .article_id = target.article_id,
-        .selected_page_count = request.pages.size()};
+        .selected_page_count = selected_page_count};
   }
 
  private:
@@ -758,28 +787,84 @@ class Compiler::Impl {
     static_cast<void>(statement.step());
   }
 
+  /// Reload retained historical pages from the applied proposal. Imported
+  /// revisions/archiving affect new evidence selection, never existing claims.
+  void retain_evidence(const updates::ArticleBase& base,
+      std::vector<domain::ExtractedPage>& pages,
+      std::unordered_map<std::string, nlohmann::json>& snapshots) const {
+    storage::Database database(state_path());
+    Statement row(database.native_handle(),
+        "SELECT p.page_id, p.source_version_id, p.page_number, p.image_path, "
+        "p.text, p.text_status, s.source_id, s.display_name, p.evidence_revision, "
+        "p.text_sha256, p.image_sha256, v.stored_path, v.sha256 "
+        "FROM source_pages p JOIN source_versions v ON v.source_version_id = p.source_version_id "
+        "JOIN sources s ON s.source_id = v.source_id WHERE p.page_id IN "
+        "(SELECT pc.page_id FROM proposal_citations pc JOIN apply_runs r "
+        "ON r.proposal_id = pc.proposal_id WHERE r.apply_run_id = ?)");
+    row.bind_text(1, base.apply_run_id.value);
+    while (row.step() == SQLITE_ROW) {
+      auto snapshot = evidence_snapshot(row);
+      if (snapshots.contains(row.text(0))) continue;
+      try {
+        if (!domain::is_valid_source_text(row.text(4)) ||
+            source_import::sha256_text(row.text(4)) != row.text(9)) {
+          throw std::invalid_argument("retained page text is corrupt");
+        }
+        source_import::verify_retained_file(project_root_ / config_.paths.sources,
+            project_root_ / domain::path_from_utf8(row.text(11)), row.text(12));
+        if (!row.is_null(3)) source_import::verify_retained_file(
+            project_root_ / config_.paths.cache,
+            project_root_ / domain::path_from_utf8(row.text(3)), row.text(10));
+      } catch (const std::exception& error) {
+        throw CompilerError(CompilerErrorKind::validation_failed, error.what());
+      }
+      domain::ExtractedPage page{.page_id = {row.text(0)},
+          .source_version_id = {row.text(1)},
+          .page_number = static_cast<std::uint32_t>(row.integer(2)),
+          .text = row.text(4), .text_status = parse_text_status(row.text(5))};
+      if (!row.is_null(3)) page.image_path = domain::path_from_utf8(row.text(3));
+      snapshots.emplace(page.page_id.value, std::move(snapshot));
+      pages.push_back(std::move(page));
+    }
+  }
+
   void persist_proposal(
       const domain::ProposalId& proposal_id,
       const domain::RunId& model_run_id,
       const domain::ArticleProposal& proposal,
       const std::optional<domain::ArticleId>& article_id,
-      const std::unordered_map<std::string, nlohmann::json>& snapshots) const {
+      const std::unordered_map<std::string, nlohmann::json>& snapshots,
+      const std::unordered_set<std::string>& latest_pages,
+      const std::optional<updates::ArticleBase>& base,
+      const bool regenerate) const {
     static_cast<void>(read_config(project_root_));
     try {
       storage::Database database(state_path());
       Transaction transaction(database);
 
+      if (base) {
+        try {
+          const auto current_base = updates::load_base(database.native_handle(), project_root_, config_, *article_id);
+          if (current_base.apply_run_id != base->apply_run_id ||
+              current_base.managed_sha256 != base->managed_sha256) {
+            throw std::invalid_argument("base article revision changed during generation; compile and review again");
+          }
+        } catch (const std::invalid_argument& error) {
+          throw CompilerError(CompilerErrorKind::validation_failed, error.what());
+        }
+      }
       // Recheck every selected page under the publication write lock. A stale
       // generation cannot supersede prior proposals or publish citations.
       for (const auto& [page_id, expected] : snapshots) {
+        const std::string freshness = latest_pages.contains(page_id)
+            ? " AND p.is_current = 1 AND s.archived_at IS NULL AND v.rowid = (SELECT MAX(v2.rowid) FROM source_versions v2 WHERE v2.source_id = s.source_id)"
+            : "";
         Statement page(database.native_handle(),
             "SELECT p.page_id, p.source_version_id, p.page_number, p.image_path, "
             "p.text, p.text_status, s.source_id, s.display_name, p.evidence_revision, "
             "p.text_sha256, p.image_sha256, v.stored_path, v.sha256 "
             "FROM source_pages p JOIN source_versions v ON v.source_version_id = p.source_version_id "
-            "JOIN sources s ON s.source_id = v.source_id WHERE p.page_id = ? "
-            "AND s.archived_at IS NULL AND v.rowid = "
-            "(SELECT MAX(v2.rowid) FROM source_versions v2 WHERE v2.source_id = s.source_id)");
+            "JOIN sources s ON s.source_id = v.source_id WHERE p.page_id = ?" + freshness);
         page.bind_text(1, page_id);
         if (page.step() != SQLITE_ROW || evidence_snapshot(page) != expected) {
           throw CompilerError(CompilerErrorKind::validation_failed,
@@ -846,6 +931,15 @@ class Compiler::Impl {
       insert.bind_text(6, utc_now());
       static_cast<void>(insert.step());
 
+      if (base) {
+        Statement update_base(database.native_handle(),
+            "INSERT INTO proposal_update_bases(proposal_id, base_apply_run_id, managed_sha256, update_mode) VALUES (?, ?, ?, ?)");
+        update_base.bind_text(1, proposal_id.value);
+        update_base.bind_text(2, base->apply_run_id.value);
+        update_base.bind_text(3, base->managed_sha256);
+        update_base.bind_text(4, regenerate ? "regenerate" : "additive");
+        static_cast<void>(update_base.step());
+      }
       for (const auto& [page_id, evidence] : snapshots) {
         Statement insert_evidence(database.native_handle(),
             "INSERT INTO proposal_evidence(proposal_id, page_id, evidence_revision, "
@@ -919,7 +1013,12 @@ std::vector<domain::ExtractedPage> Compiler::select_evidence(
 }
 
 CompileResult Compiler::compile(const CompileOptions& options) {
-  return impl_->compile(options);
+  try {
+    return impl_->compile(options);
+  } catch (const storage::StorageError& error) {
+    throw CompilerError(CompilerErrorKind::state_error,
+                        "could not read update history: " + std::string(error.what()));
+  }
 }
 
 }  // namespace kc::compiler

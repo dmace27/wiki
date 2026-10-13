@@ -40,10 +40,11 @@ class Statement {
 
 }  // namespace
 
-Database::Database(const std::filesystem::path& path) {
+Database::Database(const std::filesystem::path& path, const OpenMode mode) {
   // FULLMUTEX asks SQLite to serialize use of this connection across threads.
   const auto filename = path.string();
-  const auto flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
+  const auto flags = (mode == OpenMode::read_only ? SQLITE_OPEN_READONLY
+                     : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_FULLMUTEX;
   if (sqlite3_open_v2(filename.c_str(), &connection_, flags, nullptr) != SQLITE_OK) {
     const auto message = error_message(connection_, "failed to open state database");
     sqlite3_close(connection_);

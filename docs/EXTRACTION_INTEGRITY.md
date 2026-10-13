@@ -56,8 +56,8 @@ Restore a missing or damaged source from a known-good copy with its recorded
 SHA-256. Reimporting identical bytes can repair missing shared source storage;
 changed retained bytes are never silently accepted as a revision. Import a new
 explicit revision when the original material changes. Repair uncited images
-with `kc extract --force SOURCE_ID`; extraction rejects attempts to change
-already captured proposal evidence.
+with `kc extract --force SOURCE_ID`; task 8 publishes fresh current identities
+when existing evidence is captured, without changing that history.
 
 ## Concurrent extraction and correction
 
@@ -70,11 +70,12 @@ replacement. Garbage collection and crash cleanup remain task nine's work.
 Extraction captures all existing page state in one SQLite read transaction,
 including a monotonic `evidence_revision`. After rendering/OCR, its
 `BEGIN IMMEDIATE` publication transaction verifies the original snapshot and
-checks both normalized citations and captured proposal context. A competing
-extraction, correction, or newly published proposal makes the attempt fail
-with a retry diagnostic. No page row or earlier image is replaced. Stable page
-IDs survive successful force extraction; rows for removed uncited pages are
-deleted when a shorter document is extracted.
+checks normalized citations and captured proposal context. A competing
+extraction/correction, or a newly cited in-place replacement attempt, fails
+with a retry diagnostic. Task 8 adds new current identities for referenced
+re-extraction, preserving every historical row/image; stable page IDs survive
+uncited force extraction. Removed uncited current pages are deleted after a
+shorter retry. See [review revisions](REVIEW_EXPERIENCE.md).
 
 Corrections increment `evidence_revision` in the same write transaction as the
 text, hash, and reviewed status. Forced extraction also increments revisions.
@@ -95,10 +96,12 @@ completed generation; that audit does not imply publication. Review changed
 evidence and compile again; no automatic retry hides this boundary.
 
 Successful publication records every supplied page in `proposal_evidence`,
-including context the model did not explicitly cite. Both correction and
-re-extraction freeze these pages, using the existing immutable-proposal policy
-for pending, approved, rejected, superseded, and applied history. Importing a
-new source revision remains supported and leaves old evidence intact.
+including context the model did not explicitly cite. Referenced page text and
+images stay frozen for pending, approved, rejected, superseded, and applied
+history. Task 8 allows correction/re-extraction through new current page IDs,
+leaving those frozen rows intact. New selections must remain current at
+publication; accumulated historical citations may still refer to retired rows.
+Importing a source revision also leaves old evidence intact.
 
 ## Upgrade
 
@@ -111,8 +114,8 @@ existing normalized citation protection.
 
 Legacy image hashes are NULL because migration cannot establish an original
 image's integrity from SQL. Such images produce an explicit integrity error,
-never a newly invented trusted digest. Force-extract uncited versions to
-establish fresh images and hashes. Historical cited versions remain frozen;
+never a newly invented trusted digest. Force-extract to establish fresh current images and hashes; referenced pages
+receive new identities under task 8. Historical cited versions remain frozen;
 preserve their source/text/citation history and use a new explicit source
 revision for further compilation. Migration does not delete or bless legacy
 images.

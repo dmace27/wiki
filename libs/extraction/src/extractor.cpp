@@ -261,7 +261,7 @@ std::string page_snapshot(sqlite3* connection,
   Statement query(connection,
       "SELECT page_id, page_number, image_path, text, text_status, text_sha256, "
       "evidence_revision, image_sha256 FROM source_pages "
-      "WHERE source_version_id = ? ORDER BY page_number");
+      "WHERE source_version_id = ? AND is_current = 1 ORDER BY page_number");
   query.bind_text(1, version_id.value);
   auto rows = nlohmann::json::array();
   while (query.step() == SQLITE_ROW) {
@@ -279,7 +279,7 @@ std::vector<domain::ExtractedPage> read_existing_pages(
   Statement statement(
       connection,
       "SELECT page_id, page_number, image_path, text, text_status, text_sha256, image_sha256 "
-      "FROM source_pages WHERE source_version_id = ? ORDER BY page_number");
+      "FROM source_pages WHERE source_version_id = ? AND is_current = 1 ORDER BY page_number");
   statement.bind_text(1, version_id.value);
   std::vector<domain::ExtractedPage> pages;
   while (statement.step() == SQLITE_ROW) {
@@ -325,24 +325,19 @@ std::vector<domain::ExtractedPage> read_existing_pages(
   return pages;
 }
 
-/// Refuse to replace extraction state once a proposal captures citations or
-/// generation context. This mirrors the review correction boundary.
-void ensure_pages_are_not_cited(
+/// Determine whether replacement needs new identities to preserve immutable
+/// proposal citations or generation context, including rejected history.
+bool pages_are_cited(
     sqlite3* connection, const domain::SourceVersionId& version_id) {
   Statement statement(
       connection,
       "SELECT p.page_id FROM source_pages p "
-      "WHERE p.source_version_id = ? AND (EXISTS ("
+      "WHERE p.source_version_id = ? AND p.is_current = 1 AND (EXISTS ("
       "SELECT 1 FROM proposal_citations pc WHERE pc.page_id = p.page_id) "
       "OR EXISTS (SELECT 1 FROM proposal_evidence pe WHERE pe.page_id = p.page_id)) "
       "ORDER BY p.page_number LIMIT 1");
   statement.bind_text(1, version_id.value);
-  if (statement.step() == SQLITE_ROW) {
-    throw ExtractionError(
-        ExtractionErrorKind::invalid_state,
-        "source cannot be re-extracted after a proposal cites page " +
-            statement.text(0));
-  }
+  return statement.step() == SQLITE_ROW;
 }
 
 std::map<std::uint32_t, domain::PageId> page_ids_by_number(
@@ -458,7 +453,7 @@ void upsert_page(sqlite3* connection,
       "INSERT INTO source_pages("
       "page_id, source_version_id, page_number, image_path, text, "
       "text_status, text_sha256, image_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-      "ON CONFLICT(source_version_id, page_number) DO UPDATE SET "
+      "ON CONFLICT(source_version_id, page_number) WHERE is_current = 1 DO UPDATE SET "
       "image_path = excluded.image_path, text = excluded.text, "
       "text_status = excluded.text_status, text_sha256 = excluded.text_sha256, "
       "image_sha256 = excluded.image_sha256, "
@@ -488,7 +483,8 @@ void persist_result(storage::Database& database,
                     const std::string& expected_snapshot,
                     const std::filesystem::path& root,
                     const std::vector<domain::ExtractedPage>& pages,
-                    const std::size_t failed_pages) {
+                    const std::size_t failed_pages,
+                    const bool new_revision) {
   database.execute("BEGIN IMMEDIATE;");
   try {
     // Repeat the citation check under the write lock. A compiler process may
@@ -497,15 +493,35 @@ void persist_result(storage::Database& database,
       throw ExtractionError(ExtractionErrorKind::invalid_state,
                             "page evidence changed during extraction; retry");
     }
-    ensure_pages_are_not_cited(database.native_handle(), version_id);
-    // Removed pages must not survive a shorter re-extraction.
+    if (!new_revision && pages_are_cited(database.native_handle(), version_id)) {
+      throw ExtractionError(ExtractionErrorKind::invalid_state,
+                            "page became cited during extraction; retry to create an immutable revision");
+    }
+    if (new_revision) {
+      Statement retire(database.native_handle(),
+          "UPDATE source_pages SET is_current = 0 WHERE source_version_id = ? AND is_current = 1");
+      retire.bind_text(1, version_id.value);
+      static_cast<void>(retire.step());
+    }
+    // Removed uncited current pages must not survive a shorter re-extraction.
     Statement remove(database.native_handle(),
-        "DELETE FROM source_pages WHERE source_version_id = ? AND page_number > ?");
+        "DELETE FROM source_pages WHERE source_version_id = ? AND is_current = 1 AND page_number > ?");
     remove.bind_text(1, version_id.value);
     remove.bind_integer(2, static_cast<std::int64_t>(pages.size()));
     static_cast<void>(remove.step());
     for (const auto& page : pages) {
       upsert_page(database.native_handle(), page, root);
+      if (new_revision) {
+        Statement lineage(database.native_handle(),
+            "UPDATE source_pages SET supersedes_page_id = (SELECT old.page_id FROM source_pages old "
+            "WHERE old.source_version_id = source_pages.source_version_id AND old.page_number = source_pages.page_number "
+            "AND old.is_current = 0 ORDER BY old.rowid DESC LIMIT 1), "
+            "evidence_revision = COALESCE((SELECT old.evidence_revision + 1 FROM source_pages old "
+            "WHERE old.source_version_id = source_pages.source_version_id AND old.page_number = source_pages.page_number "
+            "AND old.is_current = 0 ORDER BY old.rowid DESC LIMIT 1), 0) WHERE page_id = ?");
+        lineage.bind_text(1, page.page_id.value);
+        static_cast<void>(lineage.step());
+      }
     }
     const auto message =
         failed_pages == 0U
@@ -606,12 +622,11 @@ ExtractionResult Extractor::extract(
         .reused = true,
         .failed_pages = count_failed(existing)};
   }
-  if (force && !existing.empty()) {
-    // Fail before invoking external adapters when immutable proposal evidence
-    // already makes this source version ineligible for replacement.
-    ensure_pages_are_not_cited(database.native_handle(), source.version_id);
-  }
-  const auto existing_ids = page_ids_by_number(existing);
+  // Referenced evidence stays immutable. A forced retry creates new current
+  // page identities/images rather than mutating the cited historical rows.
+  const bool new_revision = force && pages_are_cited(database.native_handle(), source.version_id);
+  const auto existing_ids = new_revision ? std::map<std::uint32_t, domain::PageId>{}
+                                         : page_ids_by_number(existing);
 
   const auto run_id = domain::generate_run_id();
   const auto extractor_name =
@@ -741,7 +756,7 @@ ExtractionResult Extractor::extract(
     source_import::verify_retained_file(project_root_ / config_.paths.sources,
                                       retained_path, source.sha256);
     persist_result(database, run_id, source.version_id, expected_snapshot,
-                   project_root_, pages, failed_pages);
+                   project_root_, pages, failed_pages, new_revision);
     output.release();
     return {
         .source_id = source.source_id,

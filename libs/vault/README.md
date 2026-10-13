@@ -38,3 +38,23 @@ validation rejects unsafe headings, relationships, Unicode, and ownership
 markers before review/approval. Model prose is escaped literal text; only the
 writer creates links/footnotes. Final metadata and ownership checks run before
 source copies, backups, or article writes.
+
+## Accumulated updates
+
+Updates deterministically retain approved blocks, relationships, and historical
+citations before adding new source-grounded content. `--source` filters new
+model evidence; `--regenerate` deliberately proposes complete replacement and
+review lists all removed and added claims. A compiler-owned base apply-run ID
+and managed-region digest guard publication, approval, and apply. Manual notes
+belong outside the markers; managed edits require restoration and fresh review.
+See [update semantics, revision checks, and legacy recovery](../../docs/ACCUMULATED_KNOWLEDGE.md)
+for the exact reconciliation and review JSON contracts.
+
+## Task 8 review contract
+
+Preview and apply use the same pure renderer. Approval binds exact before/after
+bytes, metadata, source evidence, destination, and collision consent with the
+inspected SHA-256 token. Any changed rendering requires renewed approval.
+Referenced extraction pages are retained; corrections/forced retries publish
+new current identities rather than rewriting citation history.
+See [exact previews and provenance-preserving review](../../docs/REVIEW_EXPERIENCE.md).

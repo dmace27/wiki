@@ -14,6 +14,7 @@ add_executable(kc_tests
   integration/project_initializer_tests.cpp
   integration/review_service_tests.cpp
   integration/search_index_tests.cpp
+  unit/rendered_diff_tests.cpp
   unit/concept_identity_tests.cpp
   unit/domain_json_tests.cpp
   unit/extraction_adapter_tests.cpp

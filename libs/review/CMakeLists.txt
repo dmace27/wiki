@@ -15,8 +15,9 @@ target_include_directories(
 
 target_link_libraries(
   kc_review
-  PUBLIC kc::domain
+  PUBLIC kc::domain kc::vault kc::extraction
   PRIVATE
+    kc::updates
     kc::import
     kc::storage
     nlohmann_json::nlohmann_json

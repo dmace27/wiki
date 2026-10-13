@@ -54,9 +54,9 @@ class Extractor {
 
   /// Extract the newest version for `source_id`.
   ///
-  /// Existing pages are returned unchanged unless `force` is true. Forced
-  /// extraction is refused after any proposal cites an existing page, because
-  /// changing its text or status would invalidate immutable citation evidence.
+  /// Existing current pages are returned unchanged unless `force` is true.
+  /// Referenced pages/images remain immutable: forced extraction publishes new
+  /// current identities with predecessor links instead of rewriting history.
   /// OCR failures still produce durable page rows with a failed status.
   [[nodiscard]] ExtractionResult extract(
       const domain::SourceId& source_id, bool force = false);

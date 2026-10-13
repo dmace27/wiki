@@ -17,6 +17,8 @@ namespace kc::compiler {
 struct CompileOptions {
   std::string concept_title;
   std::vector<domain::SourceId> source_ids;
+  /// Explicitly propose replacement; review lists every removed approved claim.
+  bool regenerate{false};
 };
 
 /// Durable identifiers returned after a pending proposal is committed.

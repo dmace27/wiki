@@ -198,26 +198,70 @@ arm64; no other finish task was completed.
 
 **Evidence:** `Compiler::compile` supplies title, operation, article ID, and selected pages; `libs/models/src/concept_prompt.cpp` receives no current approved content. `replace_managed_content` replaces the complete managed region, and article citations are replaced wholesale.
 
-- [ ] Supply the prior approved structured content and its retained evidence when generating an update, or implement deterministic section/block reconciliation around new content.
-- [ ] Make removals and changed claims explicit in review. A compilation restricted to one newly imported source must not silently discard older approved examples, explanations, or relationships.
-- [ ] Preserve citations to earlier immutable versions when those claims are retained. Latest-only evidence selection is appropriate for new source revisions, but cannot by itself represent the article's accumulated knowledge.
-- [ ] Add a base article/content revision to update proposals. Detect a changed managed region between review and apply; require renewed review while still preserving unrelated user additions.
-- [ ] Define overwrite/regeneration versus additive-update semantics in the contracts and CLI. Document the ownership of manual edits inside the managed section.
+- [x] Supply the prior approved structured content and its retained evidence when generating an update, or implement deterministic section/block reconciliation around new content.
+- [x] Make removals and changed claims explicit in review. A compilation restricted to one newly imported source must not silently discard older approved examples, explanations, or relationships.
+- [x] Preserve citations to earlier immutable versions when those claims are retained. Latest-only evidence selection is appropriate for new source revisions, but cannot by itself represent the article's accumulated knowledge.
+- [x] Add a base article/content revision to update proposals. Detect a changed managed region between review and apply; require renewed review while still preserving unrelated user additions.
+- [x] Define overwrite/regeneration versus additive-update semantics in the contracts and CLI. Document the ownership of manual edits inside the managed section.
 
 **Tests / done when:** compile a concept from semester A, later add semester B notes, then update with `--source` for B. A's supported knowledge stays unless a reviewed removal is explicit; B's additions have exact citations; user-authored surrounding text remains unchanged. Test source revisions, stale proposals, duplicate additions, and manual vault changes.
+
+**Completed October 12, 2026:** Updates now deterministically retain approved
+blocks, examples, relationships, and exact historical citations before merging
+new source-grounded contributions. `--source` restricts new model evidence;
+`--regenerate` explicitly proposes replacement, with removed and added claims
+listed in human and JSON review. Duplicate visible claims merge citation support.
+Migration 005 records trusted base apply revisions and managed-region digests;
+publication, approval, and apply reject stale bases/managed edits while preserving
+surrounding user text. Historical source revisions and archived-source citations
+remain supported; missing/corrupt retained evidence aborts accumulation. Legacy
+updates without bases require fresh review, and legacy applied articles require
+a verified baseline. [Update contracts, ownership, recovery, and verification](docs/ACCUMULATED_KNOWLEDGE.md)
+document the policy. Development and ASan/UBSan (warnings-as-errors) suites each
+passed **130/130 tests**. The release build and the focused real-CLI/local-HTTP
+fixture smoke passed, covering A-to-B-only accumulation, exact citations, human
+and JSON removal reports, duplicate idempotency, stale approval, regeneration,
+preserved user notes, and search. Verification remains deterministic and native
+macOS arm64; no other finish task was completed.
 
 ### 8. Complete the promised review experience — P0
 
 **Evidence:** `docs/CLI_CONTRACT.md` and `MVP.md` promise diffs; `ReviewService::review_proposal` and `proposal show` provide proposal content and citation evidence but no current-versus-proposed rendered diff. Extraction inspection prints an image path rather than displaying the page.
 
-- [ ] Share a pure rendering/preview component between review and apply so users approve the exact Markdown that will be written, including metadata, footnotes, and protected content boundaries.
-- [ ] Show additions/removals, destination, untracked collisions, and validation failures for create and update proposals. Include machine-readable preview/diff data.
-- [ ] Make source images easy to open beside extracted text in the terminal workflow. A CLI is sufficient, but users should not need to reconstruct image paths manually.
-- [ ] Add an explicit “reviewed, text unchanged” action for OCR. Currently users must submit replacement text just to change its review status.
-- [ ] Provide a provenance-preserving correction path after a proposal has cited a page. Even rejected/superseded proposals currently block correction and force extraction forever. Introduce extraction revisions/new page identities rather than mutating historical evidence.
-- [ ] Allow users to revoke an unused approval or reject approved work through a defined transition, with no implicit vault write.
+- [x] Share a pure rendering/preview component between review and apply so users approve the exact Markdown that will be written, including metadata, footnotes, and protected content boundaries.
+- [x] Show additions/removals, destination, untracked collisions, and validation failures for create and update proposals. Include machine-readable preview/diff data.
+- [x] Make source images easy to open beside extracted text in the terminal workflow. A CLI is sufficient, but users should not need to reconstruct image paths manually.
+- [x] Add an explicit “reviewed, text unchanged” action for OCR. Currently users must submit replacement text just to change its review status.
+- [x] Provide a provenance-preserving correction path after a proposal has cited a page. Even rejected/superseded proposals currently block correction and force extraction forever. Introduce extraction revisions/new page identities rather than mutating historical evidence.
+- [x] Allow users to revoke an unused approval or reject approved work through a defined transition, with no implicit vault write.
 
 **Tests / done when:** inspect/correct/accept an OCR page, preview an update with a deletion and a collision, approve the exact preview, and fix an extraction error discovered after rejection. Every action remains separate from apply and retains the old citation history.
+
+**Completed October 13, 2026:** Review and apply now share a pure renderer and
+read-only preview preparation. Human and JSON output show the exact complete
+Markdown, destination, addition/removal diff, untracked collisions, validation
+issues, and a SHA-256 preview token. Approval requires that token; apply must
+rebuild the same preview before any vault write. Metadata, source footnotes,
+protected user content, evidence revisions, and collision consent are bound to
+the reviewed result. Changed inputs require a fresh preview and approval.
+OCR review can open the verified image beside its matching text snapshot and
+explicitly accept unchanged text. Corrections and forced extraction of cited
+pages create current successor identities while preserving old text, images,
+revisions, offsets, and citations, including rejected/superseded history.
+Unused approvals can be revoked or rejected without writing the vault.
+Migration 006 preserves existing evidence and adds current-page lineage and
+approval bindings; existing projects upgrade with `kc init`.
+[Exact preview and review workflow](docs/REVIEW_EXPERIENCE.md) documents the
+CLI, machine-readable contract, migration, compatibility, and reproduction.
+Development and ASan/UBSan (warnings-as-errors) suites each passed **146/146
+tests**. Development, sanitized, and release builds passed; the release CLI
+review smoke exercised inspect/accept/correct, correction after rejection,
+retained citation history, collision/deletion previews, exact approval/apply,
+revocation/rejection, stale approval, and validation JSON. The accumulated-update
+CLI regression also passed. Native verification remains macOS arm64; image
+opening uses an injected runner in tests, and OCR/model fixtures are
+deterministic rather than real quality evaluations. No other finish task was
+completed.
 
 ### 9. Make apply recoverable across crashes and external edits — P0
 

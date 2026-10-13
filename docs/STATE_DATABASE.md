@@ -24,15 +24,17 @@ review state, audit history, and the local keyword index.
 | `schema_migrations` | Applied migration versions. |
 | `sources` | Logical source identity and display metadata. |
 | `source_versions` | Immutable, content-hashed imported versions. |
-| `source_pages` | Page text/image digests, evidence revision, and review status. |
+| `source_pages` | Text/image digests, evidence revision/status, current pointer and predecessor identity. |
 | `extraction_runs` | Extraction/OCR diagnostics. |
 | `model_runs` | Model request metadata and validated/raw response record. |
 | `articles` | Generated concept article identity and vault location. |
 | `proposals` | Pending/reviewed/applied structured changes. |
+| `proposal_approvals` | Exact reviewed preview token and untracked-collision consent. |
 | `proposal_evidence` | Revisions and hashes of every page supplied to generation. |
 | `proposal_citations` | Evidence attached to proposed generated blocks. |
 | `article_citations` | Evidence currently represented in an applied article. |
-| `apply_runs` | Vault-write audit and backup reference. |
+| `apply_runs` | Vault-write revision, full/managed digests, and backup reference. |
+| `proposal_update_bases` | Applied base revision, managed digest, and additive/regeneration mode. |
 | `article_fts` | FTS5 search index over generated articles. |
 
 Migration `002_proposal_review_reason.sql` adds nullable
@@ -53,6 +55,22 @@ image hashes stay NULL until an uncited version is explicitly re-extracted;
 unknown hashes are diagnosed instead of silently trusted. See
 [extraction integrity and concurrency](EXTRACTION_INTEGRITY.md) for upgrade,
 path ownership, encoding, and race verification.
+
+Migration `005_accumulated_updates.sql` adds managed-region digests to apply
+history and trusted update-base contracts. Run identity detects intervening
+applies even when content repeats. Immutable applied proposal payloads retain
+the approved accumulated blocks and citations used as the next update's base.
+Existing applied records require a verified full-file baseline on first update;
+pending/approved updates without a captured base require fresh compilation.
+See [accumulated knowledge and revision checks](ACCUMULATED_KNOWLEDGE.md).
+
+Migration `006_review_experience.sql` preserves every page/rowid/provenance
+reference while adding `is_current` and `supersedes_page_id`, with a unique
+version/page index for current rows. Referenced corrections and extraction
+retries create successors; historical citations continue to join the old rows.
+`proposal_approvals` binds the reviewed complete rendering and collision consent.
+Approval/apply match that token; revoke/reject clear unused approval snapshots.
+See [review contracts and verification](REVIEW_EXPERIENCE.md).
 
 ## Initial migration
 
@@ -195,8 +213,12 @@ CREATE VIRTUAL TABLE article_fts USING fts5(
 - Update `article_fts` only after a successful atomic Markdown write.
 - A proposal is immutable after creation. Create a new proposal rather than
   editing its payload.
-- Extraction corrections update only `source_pages.text`, `text_sha256`, and
-  `text_status`. They must occur before the page is referenced by a proposal.
+- Extraction corrections update uncited current rows with a new revision/hash;
+  referenced rows remain unchanged and receive a linked current successor.
+- Forced extraction retains old referenced rows/images, with one current page
+  per version/page number. New generation selects current rows only.
+- Approval records a preview token and collision consent; revocation returns
+  unused approved work to pending, while rejection accepts pending/approved work.
 - Proposal rejection records `reviewed_at` and optional `review_reason`; it
   never changes an article or vault file.
 - `proposal_citations` are created transactionally with the proposal.

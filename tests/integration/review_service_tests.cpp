@@ -8,6 +8,7 @@
 #include "../test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
@@ -213,10 +214,94 @@ TEST_CASE("proposal review exposes cited pages and review never edits articles")
       reviewer.reject_proposal(fixture.proposal_id, "second decision"),
       kc::review::ReviewError);
 
-  // Once compilation has normalized citations, page correction would make the
-  // immutable proposal dishonest and is therefore refused.
-  CHECK_THROWS_AS(reviewer.correct_page_text(
-                      fixture.imported.source.source_id, 1, "Changed later"),
-                  kc::review::ReviewError);
+  // Rejected evidence remains immutable, but correction gets a new current
+  // identity so the extraction error can be fixed without losing history.
+  const auto correction = reviewer.correct_page_text(
+      fixture.imported.source.source_id, 1, "Changed later");
+  CHECK(correction.page_id != fixture.page.page_id);
+  CHECK(correction.previous_page_id == fixture.page.page_id);
+  CHECK(reviewer.review_proposal(fixture.proposal_id).citation_evidence.front().extracted_text == fixture.page.text);
+  CHECK(reviewer.review_extraction(fixture.imported.source.source_id).pages.front().text == "Changed later");
   CHECK(read_file(user_article) == original_article);
+}
+
+namespace {
+/// Record direct argument vectors without starting the user's GUI viewer.
+class ImageOpenRunner final : public kc::extraction::CommandRunner {
+ public:
+  std::string program;
+  std::vector<std::string> arguments;
+  int result{0};
+  int run(std::string_view executable, const std::vector<std::string>& args) override {
+    program = executable;
+    arguments = args;
+    return result;
+  }
+};
+}  // namespace
+
+TEST_CASE("OCR acceptance keeps exact inspected text and image opening uses verified absolute argv", "[review-preview]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project with spaces";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture = seed_review_fixture(root,database);
+  // Delete synthetic proposals so this case exercises an uncited OCR page.
+  database.execute("DELETE FROM proposal_citations; DELETE FROM proposals; UPDATE source_pages SET text_status='ocr_unreviewed'");
+  kc::review::ReviewService reviewer(root);
+  const auto before = reviewer.review_extraction(fixture.imported.source.source_id);
+  REQUIRE(before.pages.size() == 1U);
+  const auto accepted = reviewer.accept_page_text(fixture.imported.source.source_id,1);
+  CHECK(accepted.page_id == before.pages.front().page_id);
+  CHECK(accepted.text_sha256 == kc::source_import::sha256_text(before.pages.front().text));
+  const auto after = reviewer.review_extraction(fixture.imported.source.source_id);
+  CHECK(after.pages.front().text == before.pages.front().text);
+  CHECK(after.pages.front().text_status == kc::domain::TextStatus::reviewed);
+  CHECK(reviewer.accept_page_text(fixture.imported.source.source_id,1).page_id == accepted.page_id);
+  CHECK(database.scalar_integer("SELECT evidence_revision FROM source_pages") == 1);
+  ImageOpenRunner opener;
+  const auto image = reviewer.open_page_image(fixture.imported.source.source_id,1,opener);
+  CHECK(image.is_absolute());
+  CHECK(image == std::filesystem::absolute(root / *fixture.page.image_path));
+  CHECK(opener.arguments.back() == image.string());
+#if defined(__APPLE__)
+  CHECK(opener.program == "/usr/bin/open");
+  CHECK(opener.arguments.front() == "--");
+#endif
+  // Opening a captured inspection uses its matching image/text even if a
+  // later extraction points the current page at a different retained image.
+  const auto newer_image = root / ".knowledge-compiler/pages/newer.png";
+  write_file(newer_image,"review image fixture");
+  database.execute("UPDATE source_pages SET image_path='.knowledge-compiler/pages/newer.png'");
+  CHECK(reviewer.open_page_image(after.pages.front(),opener) == image);
+  CHECK(opener.arguments.back() == image.string());
+  opener.result = 1;
+  CHECK_THROWS_AS(reviewer.open_page_image(fixture.imported.source.source_id,1,opener),kc::review::ReviewError);
+  CHECK_THROWS_AS(reviewer.page_image(fixture.imported.source.source_id,2),kc::review::ReviewError);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 0);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM articles") == 0);
+}
+
+TEST_CASE("cited OCR corrections preserve rejected and superseded evidence while selecting the new page", "[review-preview]") {
+  const auto status = GENERATE("pending","approved","rejected","superseded");
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture = seed_review_fixture(root,database);
+  database.execute("UPDATE proposals SET status = " + sql_string(status));
+  kc::review::ReviewService reviewer(root);
+  const auto correction = reviewer.correct_page_text(fixture.imported.source.source_id,1,"Corrected Markov chain learning.\n");
+  CHECK(correction.previous_page_id == fixture.page.page_id);
+  CHECK(correction.page_id != fixture.page.page_id);
+  CHECK(database.scalar_text("SELECT text FROM source_pages WHERE is_current=0") == fixture.page.text);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM source_pages WHERE is_current=1") == 1);
+  CHECK(reviewer.review_extraction(fixture.imported.source.source_id).pages.front().page_id == correction.page_id);
+  const auto history = reviewer.review_proposal(fixture.proposal_id);
+  CHECK(history.citation_evidence.front().citation.page_id == fixture.page.page_id);
+  CHECK(history.citation_evidence.front().extracted_text == fixture.page.text);
+  CHECK(history.citation_evidence.front().image_path == fixture.page.image_path);
+  CHECK(std::filesystem::exists(root / *fixture.page.image_path));
+  CHECK_THROWS_AS(reviewer.correct_page_text(fixture.imported.source.source_id,1,"Unexpected stale acceptance",fixture.page.page_id),kc::review::ReviewError);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM articles") == 0);
 }

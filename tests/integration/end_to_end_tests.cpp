@@ -169,7 +169,7 @@ TEST_CASE("import through apply produces a searchable source-linked article") {
   kc::storage::Database database(initialized.state_path);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM article_fts") == 0);
   kc::vault::VaultWriter writer(project_root);
-  writer.approve(compiled.proposal_id);
+  kc::test::approve_preview(writer, compiled.proposal_id);
   // Approval is review state only; indexing must wait for a successful apply.
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM article_fts") == 0);
   const auto applied = writer.apply(compiled.proposal_id);

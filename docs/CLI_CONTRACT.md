@@ -20,12 +20,14 @@ Every command accepts:
 | `kc status` | none | Show source, page, proposal, and article counts plus pending work. |
 | `kc import` | `FILE... [--source SOURCE_ID]` | Create new logical sources, or explicitly revise one source with exactly one file; retain immutable bytes. |
 | `kc extract` | `SOURCE_ID [--force]` | Extract native text, render pages, and run local OCR when configured. |
-| `kc review extraction` | `SOURCE_ID [--page N (--text TEXT | --text-file PATH)]` | Show page image paths, extracted text, and status together; optionally correct one page before compilation. `--page N` alone narrows inspection. |
-| `kc compile` | `--concept TITLE [--source SOURCE_ID...]` | Select relevant pages and create one schema-validated pending proposal. |
+| `kc review extraction` | `SOURCE_ID [--page N] [--text TEXT | --text-file PATH | --accept] [--open-image]` | Inspect current image/text/status; accept unchanged or correct text. Cited corrections retain old identities. Mutations and image opening require `--page`. |
+| `kc compile` | `--concept TITLE [--source SOURCE_ID...] [--regenerate]` | Select new evidence and create a validated pending proposal; updates accumulate by default. `--regenerate` explicitly proposes replacement of an existing article. |
 | `kc proposal list` | `[--status STATUS]` | List proposals. |
-| `kc proposal show` | `PROPOSAL_ID` | Show proposed Markdown, diff, citations, and source-page references. |
-| `kc proposal approve` | `PROPOSAL_ID` | Approve a valid pending proposal; does not write the vault. |
-| `kc proposal reject` | `PROPOSAL_ID [--reason TEXT]` | Reject a pending proposal; does not write the vault. |
+| `kc proposal show` | `PROPOSAL_ID [--allow-overwrite-user-file]` | Show exact Markdown/diff, destination/collisions/validation, citations, and preview token. |
+| `kc proposal preview` | `PROPOSAL_ID [--allow-overwrite-user-file]` | Focused read-only rendering/diff, including invalid stored-state diagnostics. |
+| `kc proposal approve` | `PROPOSAL_ID --preview SHA256 [--allow-overwrite-user-file]` | Approve the exact inspected valid rendering; no vault write. |
+| `kc proposal revoke` | `PROPOSAL_ID` | Return an unused approval to pending; no vault write. |
+| `kc proposal reject` | `PROPOSAL_ID [--reason TEXT]` | Reject pending or unused approved work; no vault write. |
 | `kc apply` | `PROPOSAL_ID [--allow-overwrite-user-file]` | Atomically write an approved proposal and update citations/search. The flag is required to replace an untracked colliding file. |
 | `kc search` | `QUERY [--limit N]` | Search article title, aliases, and body using local FTS5. |
 | `kc open` | `ARTICLE_ID` | Deferred platform integration to open a vault article in Obsidian. |
@@ -41,7 +43,7 @@ kc review extraction src_01j...
 kc review extraction src_01j... --page 3 --text-file corrected-page.txt
 kc compile --concept "Markov Chains"
 kc proposal show prp_01j...
-kc proposal approve prp_01j...
+kc proposal approve prp_01j... --preview PREVIEW_SHA256
 kc apply prp_01j...
 kc search "markov chains"
 
@@ -93,7 +95,8 @@ activation, shared files, and complete batch examples.
 - Standard output is result data. Progress and diagnostics go to standard error.
 - `--json` emits one object with `ok`, `command`, and either `result` or
   `error`; no progress text may appear on standard output. Failed import batches
-  include both `result` and `error` to retain per-file outcomes.
+  include both `result` and `error` to retain per-file outcomes. Invalid proposal
+  previews also retain their inspectable result alongside the error.
 - Exit `0`: completed successfully.
 - Exit `2`: invalid command arguments or invalid project configuration.
 - Exit `3`: a requested resource does not exist or cannot be used in its current
@@ -106,8 +109,9 @@ activation, shared files, and complete batch examples.
 ## State transitions
 
 ```text
-pending --approve--> approved --apply--> applied
-pending --reject------------------------> rejected
+pending --approve exact preview--> approved --apply--> applied
+approved --revoke----------------> pending
+pending/approved --reject--------> rejected
 pending/approved --newer proposal-------> superseded
 ```
 
@@ -120,11 +124,17 @@ article, and replaces only content between the configured managed markers. It
 publishes article/citation/audit/FTS state after the atomic file replacement;
 if that state transaction fails, it restores the pre-apply article bytes.
 
-Extraction correction changes only the latest `source_pages` text, hash, and
-status. It is refused after a proposal has cited the page because proposal
-payloads and normalized citation offsets are immutable. Proposal list/show are
-read-only, while reject changes only proposal review metadata. None of these
-review operations writes or edits a vault article.
+Extraction correction targets current pages of the latest source version.
+Referenced text/images remain immutable: corrections and forced retries create
+new current page identities linked to retained historical pages. `--accept`
+records inspected text unchanged. `--open-image` launches the verified selected
+image with direct argv while showing extracted text/status in the terminal.
+Proposal show/preview/list are read-only; approval, revoke, and reject change
+only review state. None writes a vault article. Approval/apply independently
+rebuild and match the preview token; changed bytes/metadata/configuration or
+consent require renewed review. Invalid `proposal preview --json` returns exit
+5 with both an error and inspectable `result.preview` data. See the precise
+[preview JSON, revision, and review workflow](REVIEW_EXPERIENCE.md).
 
 ## Article metadata and generated text
 
@@ -136,3 +146,14 @@ Invalid YAML/ambiguous aliases or changed compiler identity abort apply before
 writing. Model text renders literally; the writer supplies links and citations.
 Headings, relationships, and reserved markers are validated before proposals
 enter review. See [Markdown metadata and rendering](MARKDOWN_METADATA.md).
+
+## Accumulated updates
+
+Updates deterministically retain approved blocks, relationships, and historical
+citations before adding new source-grounded content. `--source` filters new
+model evidence; `--regenerate` deliberately proposes complete replacement and
+review lists all removed and added claims. A compiler-owned base apply-run ID
+and managed-region digest guard publication, approval, and apply. Manual notes
+belong outside the markers; managed edits require restoration and fresh review.
+See [update semantics, revision checks, and legacy recovery](ACCUMULATED_KNOWLEDGE.md)
+for the exact reconciliation and review JSON contracts.

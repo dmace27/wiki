@@ -16,6 +16,8 @@ struct ProposalGenerationRequest {
   // Compiler-resolved slug preserves historical identity during updates.
   std::optional<std::string> concept_slug;
   std::vector<domain::ExtractedPage> pages;
+  /// Additions are reconciled with approved content after model validation.
+  bool additive_update{false};
 };
 
 /// Semantic checks that require both model output and its evidence pages.

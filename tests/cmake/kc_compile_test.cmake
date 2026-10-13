@@ -49,3 +49,18 @@ foreach(title IN ITEMS "CON" "nul.txt" "COM9" "LPT2" "Topic." "Topic?")
       "${invalid_error} ${invalid_output}")
   endif()
 endforeach()
+
+# Regeneration is deliberate and only applies to an existing approved article.
+execute_process(
+  COMMAND "${KC_EXE}" --project "${KC_TEST_ROOT}" --json compile
+          --concept "Markov Chains" --regenerate
+  RESULT_VARIABLE regenerate_status
+  OUTPUT_VARIABLE regenerate_output
+  ERROR_VARIABLE regenerate_error
+)
+if(NOT regenerate_status EQUAL 2 OR
+   NOT regenerate_output MATCHES "\"code\":\"invalid_concept\"" OR
+   NOT regenerate_output MATCHES "requires an existing applied article")
+  message(FATAL_ERROR
+    "regeneration semantics were not enforced: ${regenerate_error} ${regenerate_output}")
+endif()

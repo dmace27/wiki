@@ -157,6 +157,11 @@ kc::domain::ProposalId seed_update_proposal(
       sql_string(proposal_id.value) + "," + sql_string(article_id.value) +
       ",'update_article'," + sql_string(payload) +
       ",'pending','2026-08-11T12:01:00Z');");
+  // These writer fixtures deliberately exercise explicit replacement. The
+  // production compiler captures the same base before model generation.
+  database.execute("INSERT INTO proposal_update_bases(proposal_id, base_apply_run_id, managed_sha256, update_mode) "
+      "SELECT " + sql_string(proposal_id.value) + ",apply_run_id,managed_sha256,'regenerate' "
+      "FROM apply_runs WHERE article_id = " + sql_string(article_id.value) + " ORDER BY rowid DESC LIMIT 1");
   for (const auto &[section, block] :
        {std::pair<std::string_view, int>{"working_explanation", 0},
         {"key_ideas", 0},
@@ -183,7 +188,7 @@ TEST_CASE(
   const auto fixture = seed_create_proposal(project_root, database);
   kc::vault::VaultWriter writer(project_root);
 
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   const auto applied = writer.apply(fixture.proposal_id);
 
   const auto article_path = project_root / applied.vault_path;
@@ -221,7 +226,7 @@ TEST_CASE(
   kc::storage::Database database(initialized.state_path);
   const auto fixture = seed_create_proposal(project_root, database);
   kc::vault::VaultWriter writer(project_root);
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   const auto created = writer.apply(fixture.proposal_id);
 
   const auto article_path = project_root / created.vault_path;
@@ -241,7 +246,7 @@ TEST_CASE(
   const auto old_prefix = user_edited.substr(0, old_start);
   const auto old_suffix = user_edited.substr(old_end);
 
-  writer.approve(update_id);
+  kc::test::approve_preview(writer, update_id);
   const auto updated = writer.apply(update_id);
   const auto new_content = read_file(article_path);
   const auto new_start = new_content.find(start_marker) + start_marker.size();
@@ -268,7 +273,7 @@ TEST_CASE("writer rejects review bypasses and unapproved file collisions") {
   kc::vault::VaultWriter writer(project_root);
 
   CHECK_THROWS_AS(writer.apply(fixture.proposal_id), kc::vault::VaultError);
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   const auto collision = project_root / "vault/Markov Chains.md";
   write_file(collision, "User-owned article with no managed markers.\n");
   CHECK_THROWS_AS(writer.apply(fixture.proposal_id), kc::vault::VaultError);
@@ -281,6 +286,8 @@ TEST_CASE("writer rejects review bypasses and unapproved file collisions") {
 
   // The dangerous path is possible only through an explicit caller option,
   // and it retains the displaced user file as a recovery backup.
+  kc::review::ReviewService(project_root).revoke_approval(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id, {.allow_overwrite_user_file = true});
   const auto explicitly_applied =
       writer.apply(fixture.proposal_id, {.allow_overwrite_user_file = true});
   REQUIRE(explicitly_applied.backup_path.has_value());
@@ -300,7 +307,7 @@ TEST_CASE("malformed managed markers abort before backup, audit, or indexing") {
   kc::storage::Database database(initialized.state_path);
   const auto fixture = seed_create_proposal(project_root, database);
   kc::vault::VaultWriter writer(project_root);
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   const auto created = writer.apply(fixture.proposal_id);
 
   const auto article_path = project_root / created.vault_path;
@@ -310,8 +317,9 @@ TEST_CASE("malformed managed markers abort before backup, audit, or indexing") {
   write_file(article_path, malformed);
   const auto update_id =
       seed_update_proposal(database, fixture.page_id, created.article_id);
-  writer.approve(update_id);
-
+  CHECK_THROWS_AS(kc::test::approve_preview(writer, update_id), kc::vault::VaultError);
+  // Even a previously approved/corrupt legacy status cannot bypass the check.
+  database.execute("UPDATE proposals SET status = 'approved' WHERE proposal_id = " + sql_string(update_id.value));
   CHECK_THROWS_AS(writer.apply(update_id), kc::vault::VaultError);
   CHECK(read_file(article_path) == malformed);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 1);
@@ -328,7 +336,7 @@ TEST_CASE("legacy case-only update proposals retain canonical title filename and
   kc::storage::Database database(initialized.state_path);
   const auto fixture = seed_create_proposal(project_root, database);
   kc::vault::VaultWriter writer(project_root);
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   const auto first = writer.apply(fixture.proposal_id);
   const auto update = seed_update_proposal(database, fixture.page_id, first.article_id);
   database.execute("UPDATE proposals SET payload_json = json_set(payload_json, "
@@ -337,7 +345,7 @@ TEST_CASE("legacy case-only update proposals retain canonical title filename and
       "SELECT payload_json FROM proposals WHERE proposal_id = " + sql_string(update.value));
   kc::review::ReviewService review(project_root);
   CHECK(review.review_proposal(update).proposal.article.title == "Markov Chains");
-  writer.approve(update);
+  kc::test::approve_preview(writer, update);
   const auto second = writer.apply(update);
   CHECK(second.article_id == first.article_id);
   CHECK(second.vault_path == first.vault_path);
@@ -357,7 +365,7 @@ TEST_CASE("approval and apply reject stale create identity before writing") {
   kc::storage::Database database(initialized.state_path);
   const auto fixture = seed_create_proposal(project_root, database);
   kc::vault::VaultWriter writer(project_root);
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   // Another process claims a distinct concept with this slug after approval.
   database.execute("INSERT INTO articles(article_id,title,slug,vault_path,created_at,updated_at) "
                    "VALUES ('art_01J00000000000000000000000','Markov-Chains','markov-chains',"
@@ -367,7 +375,7 @@ TEST_CASE("approval and apply reject stale create identity before writing") {
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 0);
   CHECK(database.scalar_text("SELECT status FROM proposals") == "approved");
   database.execute("UPDATE proposals SET status = 'pending'");
-  CHECK_THROWS_AS(writer.approve(fixture.proposal_id), kc::vault::VaultError);
+  CHECK_THROWS_AS(kc::test::approve_preview(writer, fixture.proposal_id), kc::vault::VaultError);
   CHECK(database.scalar_text("SELECT status FROM proposals") == "pending");
 }
 
@@ -378,7 +386,7 @@ TEST_CASE("apply cannot overwrite a different tracked destination with an explic
   kc::storage::Database database(initialized.state_path);
   const auto fixture = seed_create_proposal(project_root, database);
   kc::vault::VaultWriter writer(project_root);
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   write_file(project_root / "vault" / "Markov Chains.md", "User notes belong to a different article.\n");
   database.execute("INSERT INTO articles(article_id,title,slug,vault_path,created_at,updated_at) "
                    "VALUES ('art_01J00000000000000000000000','Other Topic','other-topic',"
@@ -397,7 +405,7 @@ TEST_CASE("apply refuses portable aliases of an untracked filename") {
   kc::storage::Database database(initialized.state_path);
   const auto fixture = seed_create_proposal(project_root, database);
   kc::vault::VaultWriter writer(project_root);
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   const auto alias = project_root / "vault" / "Markov Chains.md.";
   write_file(alias, "Keep this user file.\n");
   const auto destination = project_root / "vault" / "Markov Chains.md";
@@ -427,7 +435,7 @@ TEST_CASE("generated YAML scalar-looking titles and aliases remain strings") {
   payload["article"]["aliases"] = aliases;
   database.execute("UPDATE proposals SET payload_json = " + sql_string(payload.dump()));
   kc::vault::VaultWriter writer(root);
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   const auto created = writer.apply(fixture.proposal_id);
   const auto content = read_file(root / created.vault_path);
   const auto metadata = YAML::Load(content.substr(4, content.find("\n---\n", 4) - 4));
@@ -454,7 +462,7 @@ TEST_CASE("empty aliases are an actual YAML sequence and legacy null aliases sta
   payload["article"]["aliases"] = nlohmann::json::array();
   database.execute("UPDATE proposals SET payload_json = " + sql_string(payload.dump()));
   kc::vault::VaultWriter writer(root);
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   const auto created = writer.apply(fixture.proposal_id);
   const auto path = root / created.vault_path;
   auto content = read_file(path);
@@ -464,7 +472,7 @@ TEST_CASE("empty aliases are an actual YAML sequence and legacy null aliases sta
   content.replace(content.find("aliases: []"), std::string("aliases: []").size(), "aliases:");
   write_file(path, content);
   const auto update = seed_update_proposal(database, fixture.page_id, created.article_id);
-  writer.approve(update);
+  kc::test::approve_preview(writer, update);
   static_cast<void>(writer.apply(update));
   CHECK(read_file(path).starts_with(content.substr(0, content.find("<!-- kc:managed:start"))));
   CHECK(database.scalar_text("SELECT aliases FROM article_fts").empty());
@@ -481,7 +489,7 @@ TEST_CASE("invalid user frontmatter aborts updates before files backups and FTS 
   kc::storage::Database database(initialized.state_path);
   const auto fixture = seed_create_proposal(root, database);
   kc::vault::VaultWriter writer(root);
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   const auto created = writer.apply(fixture.proposal_id);
   const auto path = root / created.vault_path;
   auto content = read_file(path);
@@ -490,7 +498,8 @@ TEST_CASE("invalid user frontmatter aborts updates before files backups and FTS 
   write_file(path, content);
   const auto old_index = database.scalar_text("SELECT body FROM article_fts");
   const auto update = seed_update_proposal(database, fixture.page_id, created.article_id);
-  writer.approve(update);
+  CHECK_FALSE(writer.preview(update).valid);
+  CHECK_THROWS_AS(kc::test::approve_preview(writer, update), kc::vault::VaultError);
   CHECK_THROWS_AS(writer.apply(update), kc::vault::VaultError);
   CHECK(read_file(path) == content);
   CHECK(database.scalar_text("SELECT body FROM article_fts") == old_index);
@@ -513,7 +522,7 @@ TEST_CASE("approval and review refuse unsafe stored rendering fields") {
   kc::vault::VaultWriter writer(root);
   kc::review::ReviewService review(root);
   CHECK_THROWS_AS(review.review_proposal(fixture.proposal_id), kc::review::ReviewError);
-  CHECK_THROWS_AS(writer.approve(fixture.proposal_id), kc::vault::VaultError);
+  CHECK_THROWS_AS(kc::test::approve_preview(writer, fixture.proposal_id), kc::vault::VaultError);
   CHECK(database.scalar_text("SELECT status FROM proposals") == "pending");
   // Recheck previously approved legacy or manually modified state at apply.
   database.execute("UPDATE proposals SET status = 'approved'");
@@ -538,7 +547,7 @@ TEST_CASE("rendered prose and hostile source labels cannot forge links footnotes
   database.execute("UPDATE sources SET display_name = " + sql_string(
       "Notes](https://evil.test) <img src=x>\n[^fake]: injected"));
   kc::vault::VaultWriter writer(root);
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   const auto applied = writer.apply(fixture.proposal_id);
   const auto content = read_file(root / applied.vault_path);
   CHECK(content.find("[Fake](") == std::string::npos);
@@ -561,7 +570,7 @@ TEST_CASE("final articles reject extra ownership markers and shadowed source foo
   kc::storage::Database database(initialized.state_path);
   const auto fixture = seed_create_proposal(root, database);
   kc::vault::VaultWriter writer(root);
-  writer.approve(fixture.proposal_id);
+  kc::test::approve_preview(writer, fixture.proposal_id);
   const auto created = writer.apply(fixture.proposal_id);
   const auto path = root / created.vault_path;
   const auto content = read_file(path) + (marker
@@ -569,7 +578,8 @@ TEST_CASE("final articles reject extra ownership markers and shadowed source foo
       : "\n[^" + fixture.page_id.value + "]: [False source](wrong.pdf)\n");
   write_file(path, content);
   const auto update = seed_update_proposal(database, fixture.page_id, created.article_id);
-  writer.approve(update);
+  CHECK_FALSE(writer.preview(update).valid);
+  CHECK_THROWS_AS(kc::test::approve_preview(writer, update), kc::vault::VaultError);
   CHECK_THROWS_AS(writer.apply(update), kc::vault::VaultError);
   CHECK(read_file(path) == content);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 1);
@@ -592,7 +602,7 @@ TEST_CASE("common invalid JSON contracts cannot bypass review approval or apply"
     const auto document = kc::test::case_document(fixture);
     database.execute("UPDATE proposals SET status = 'pending', payload_json = " + sql_string(document.dump()));
     CHECK_THROWS_AS(review.review_proposal(seeded.proposal_id), kc::review::ReviewError);
-    CHECK_THROWS_AS(writer.approve(seeded.proposal_id), kc::vault::VaultError);
+    CHECK_THROWS_AS(kc::test::approve_preview(writer, seeded.proposal_id), kc::vault::VaultError);
     CHECK(database.scalar_text("SELECT status FROM proposals") == "pending");
     // Corrupt/legacy approvals are revalidated, not trusted as a parsing bypass.
     database.execute("UPDATE proposals SET status = 'approved'");
@@ -604,4 +614,271 @@ TEST_CASE("common invalid JSON contracts cannot bypass review approval or apply"
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 0);
   CHECK(std::filesystem::is_empty(root / "vault"));
   CHECK(std::filesystem::is_empty(root / ".knowledge-compiler/backups"));
+}
+
+TEST_CASE("read-only create preview is deterministic and apply writes exactly the approved Markdown", "[review-preview]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture = seed_create_proposal(root, database);
+  kc::vault::VaultWriter writer(root);
+  const auto preview = writer.preview(fixture.proposal_id);
+  REQUIRE(preview.valid);
+  REQUIRE(preview.after);
+  CHECK_FALSE(preview.before);
+  CHECK(preview.destination == "vault/Markov Chains.md");
+  CHECK(preview.token == writer.preview(fixture.proposal_id).token);
+  CHECK(preview.after->find("article_id: \"" + preview.article_id->value + "\"") != std::string::npos);
+  CHECK(preview.after->find("#page=3") != std::string::npos);
+  CHECK(preview.diff.find("--- /dev/null") != std::string::npos);
+  CHECK(preview.diff.find("+aliases:") != std::string::npos);
+  CHECK_FALSE(std::filesystem::exists(root / "vault/_sources"));
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 0);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposal_approvals") == 0);
+  CHECK(database.scalar_text("SELECT status FROM proposals") == "pending");
+  CHECK_THROWS_AS(writer.approve(fixture.proposal_id), kc::vault::VaultError);
+  CHECK_THROWS_AS(writer.approve(fixture.proposal_id, std::string(64,'0')), kc::vault::VaultError);
+  writer.approve(fixture.proposal_id, preview.token);
+  CHECK_FALSE(std::filesystem::exists(root / preview.destination));
+  CHECK_FALSE(std::filesystem::exists(root / "vault/_sources"));
+  CHECK(writer.preview(fixture.proposal_id).matches_approval == true);
+  const auto applied = writer.apply(fixture.proposal_id);
+  CHECK(applied.article_id == preview.article_id);
+  CHECK(read_file(root / applied.vault_path) == *preview.after);
+  CHECK(database.scalar_text("SELECT body FROM article_fts") == *preview.after);
+}
+
+TEST_CASE("update preview shows exact removals and preserves metadata and surrounding bytes", "[review-preview]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture = seed_create_proposal(root, database);
+  kc::vault::VaultWriter writer(root);
+  kc::test::approve_preview(writer, fixture.proposal_id);
+  const auto created = writer.apply(fixture.proposal_id);
+  const auto path = root / created.vault_path;
+  const auto surrounding = "\r\n## Personal material\r\nKeep \"every\" user byte.\r\n";
+  const auto before = read_file(path) + surrounding;
+  write_file(path, before);
+  const auto update = seed_update_proposal(database, fixture.page_id, created.article_id, "A revised explanation is proposed.");
+  const auto review = kc::review::ReviewService(root).review_proposal(update);
+  const auto& preview = review.preview;
+  REQUIRE(preview.valid);
+  CHECK(preview.before == before);
+  CHECK(preview.after->ends_with(surrounding));
+  CHECK(preview.diff.find("-A Markov chain moves between states") != std::string::npos);
+  CHECK(preview.diff.find("+A revised explanation is proposed") != std::string::npos);
+  CHECK(preview.after->substr(0, before.find("<!-- kc:managed:start")) == before.substr(0, before.find("<!-- kc:managed:start")));
+  CHECK(read_file(path) == before);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 1);
+  writer.approve(update, preview.token);
+  CHECK(read_file(path) == before);
+  static_cast<void>(writer.apply(update));
+  CHECK(read_file(path) == preview.after);
+}
+
+TEST_CASE("untracked collision preview requires matching consent at approval and apply", "[review-preview]") {
+  const auto empty_collision = GENERATE(false, true);
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture = seed_create_proposal(root, database);
+  kc::vault::VaultWriter writer(root);
+  const auto path = root / "vault/Markov Chains.md";
+  const auto user = empty_collision ? std::string{} : "# My user article\nImportant unrelated content.\n";
+  write_file(path,user);
+  const auto blocked = writer.preview(fixture.proposal_id);
+  CHECK_FALSE(blocked.valid);
+  CHECK(blocked.untracked_collision);
+  CHECK(blocked.before == user);
+  REQUIRE(blocked.after);
+  REQUIRE_FALSE(blocked.issues.empty());
+  CHECK(blocked.diff.find("+article_id:") != std::string::npos);
+  if (!empty_collision) CHECK(blocked.diff.find("-Important unrelated content.") != std::string::npos);
+  CHECK(read_file(path) == user);
+  const auto consent = writer.preview(fixture.proposal_id, {.allow_overwrite_user_file = true});
+  REQUIRE(consent.valid);
+  CHECK(consent.token != blocked.token);
+  CHECK_THROWS_AS(writer.approve(fixture.proposal_id, consent.token), kc::vault::VaultError);
+  writer.approve(fixture.proposal_id, consent.token, {.allow_overwrite_user_file = true});
+  CHECK_THROWS_AS(writer.apply(fixture.proposal_id), kc::vault::VaultError);
+  CHECK(read_file(path) == user);
+  const auto applied = writer.apply(fixture.proposal_id, {.allow_overwrite_user_file = true});
+  CHECK(read_file(path) == consent.after);
+  CHECK(read_file(root / *applied.backup_path) == user);
+}
+
+TEST_CASE("preview reports invalid proposals and evidence without copying sources or changing review state", "[review-preview]") {
+  const auto damage = GENERATE("payload","citations","source","unreviewed","image_metadata");
+  CAPTURE(damage);
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture = seed_create_proposal(root, database);
+  if (std::string_view(damage) == "payload") database.execute("UPDATE proposals SET payload_json = '{}'");
+  else if (std::string_view(damage) == "citations") database.execute("UPDATE proposal_citations SET quote='wrong'");
+  else if (std::string_view(damage) == "unreviewed") database.execute("UPDATE source_pages SET text_status='ocr_unreviewed'");
+  else if (std::string_view(damage) == "image_metadata") database.execute("UPDATE source_pages SET image_sha256='hash-with-no-image'");
+  else {
+    const auto retained = root / fixture.imported.version.stored_path;
+    std::filesystem::permissions(retained,std::filesystem::perms::owner_write,std::filesystem::perm_options::add);
+    write_file(retained,"tampered evidence");
+  }
+  kc::vault::VaultWriter writer(root);
+  const auto preview = writer.preview(fixture.proposal_id);
+  CHECK_FALSE(preview.valid);
+  REQUIRE_FALSE(preview.issues.empty());
+  const auto data = kc::vault::preview_json(preview);
+  CHECK(data["valid"] == false);
+  CHECK_FALSE(data["issues"].empty());
+  CHECK_THROWS_AS(writer.approve(fixture.proposal_id, preview.token), kc::vault::VaultError);
+  CHECK(database.scalar_text("SELECT status FROM proposals") == "pending");
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposal_approvals") == 0);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 0);
+  CHECK_FALSE(std::filesystem::exists(root / "vault/_sources"));
+}
+
+TEST_CASE("changed preview inputs require fresh approval and preserve all user changes", "[review-preview]") {
+  const auto change = GENERATE("notes","aliases","source_label","config","trailing_root");
+  CAPTURE(change);
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture = seed_create_proposal(root, database);
+  kc::vault::VaultWriter writer(root);
+  kc::test::approve_preview(writer, fixture.proposal_id);
+  const auto created = writer.apply(fixture.proposal_id);
+  const auto path = root / created.vault_path;
+  const auto update = seed_update_proposal(database, fixture.page_id, created.article_id);
+  const auto old = writer.preview(update);
+  writer.approve(update, old.token);
+  auto content = read_file(path);
+  if (std::string_view(change) == "notes") content += "\nUnrelated user addition after approval.\n";
+  else if (std::string_view(change) == "aliases") content.replace(content.find("Markov chain\""), std::string("Markov chain").size(), "User alias");
+  else if (std::string_view(change) == "source_label") database.execute("UPDATE sources SET display_name='Renamed source.pdf'");
+  else {
+    auto config = kc::test::read_json(root / "kc.json");
+    if (std::string_view(change) == "trailing_root") config["paths"]["vault"] = "vault/";
+    else config["vault"]["source_directory"] = "_reviewed_sources";
+    write_file(root / "kc.json", config.dump());
+  }
+  write_file(path,content);
+  // A fresh writer observes configuration changes as it does in separate CLI invocations.
+  kc::vault::VaultWriter current(root);
+  const auto changed = current.preview(update);
+  REQUIRE(changed.valid);
+  CHECK(changed.token != old.token);
+  CHECK(changed.matches_approval == false);
+  CHECK_THROWS_AS(current.apply(update), kc::vault::VaultError);
+  CHECK(read_file(path) == content);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 1);
+  kc::review::ReviewService(root).revoke_approval(update);
+  CHECK_THROWS_AS(current.approve(update,old.token), kc::vault::VaultError);
+  current.approve(update,changed.token);
+  static_cast<void>(current.apply(update));
+  CHECK(read_file(path) == changed.after);
+}
+
+TEST_CASE("unused approvals can be revoked or rejected without any implicit vault write", "[review-preview]") {
+  const auto reject = GENERATE(false,true);
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture = seed_create_proposal(root,database);
+  kc::vault::VaultWriter writer(root);
+  kc::review::ReviewService review(root);
+  CHECK_THROWS_AS(review.revoke_approval(fixture.proposal_id),kc::review::ReviewError);
+  kc::test::approve_preview(writer,fixture.proposal_id);
+  if (reject) review.reject_proposal(fixture.proposal_id,"Found an extraction error");
+  else review.revoke_approval(fixture.proposal_id);
+  CHECK(database.scalar_text("SELECT status FROM proposals") == (reject ? "rejected" : "pending"));
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposal_approvals") == 0);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM articles") == 0);
+  CHECK_FALSE(std::filesystem::exists(root / "vault/_sources"));
+  CHECK_THROWS_AS(writer.apply(fixture.proposal_id),kc::vault::VaultError);
+  if (!reject) {
+    kc::test::approve_preview(writer,fixture.proposal_id);
+    const auto applied = writer.apply(fixture.proposal_id);
+    const auto bytes = read_file(root / applied.vault_path);
+    CHECK_THROWS_AS(review.revoke_approval(fixture.proposal_id),kc::review::ReviewError);
+    CHECK_THROWS_AS(review.reject_proposal(fixture.proposal_id),kc::review::ReviewError);
+    CHECK(read_file(root / applied.vault_path) == bytes);
+  }
+}
+
+TEST_CASE("preview catches source-copy filesystem conflicts before approval", "[review-preview]") {
+  const auto conflict = GENERATE("retained_symlink","copy_symlink","parent_file","article_overlap");
+  CAPTURE(conflict);
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture = seed_create_proposal(root,database);
+  const auto retained = root / fixture.imported.version.stored_path;
+  if (std::string_view(conflict) == "retained_symlink") {
+    const auto alternate = retained.parent_path() / "alternate.pdf";
+    std::filesystem::rename(retained,alternate);
+    std::filesystem::create_symlink(alternate.filename(),retained);
+  } else if (std::string_view(conflict) == "copy_symlink") {
+    const auto alternate = root / "vault/alternate.pdf";
+    std::filesystem::copy_file(retained,alternate);
+    const auto directory = root / "vault/_sources";
+    std::filesystem::create_directory(directory);
+    std::filesystem::create_symlink("../alternate.pdf",directory /
+        (fixture.imported.source.source_id.value + "-" + fixture.imported.version.source_version_id.value + ".pdf"));
+  } else if (std::string_view(conflict) == "parent_file") {
+    write_file(root / "vault/_sources","A file cannot contain source copies.");
+  } else {
+    auto config = kc::test::read_json(root / "kc.json");
+    config["vault"]["source_directory"] = "Markov Chains.md";
+    write_file(root / "kc.json",config.dump());
+  }
+  kc::vault::VaultWriter writer(root);
+  const auto preview = writer.preview(fixture.proposal_id);
+  CHECK_FALSE(preview.valid);
+  REQUIRE_FALSE(preview.issues.empty());
+  CHECK_THROWS_AS(writer.approve(fixture.proposal_id,preview.token),kc::vault::VaultError);
+  CHECK(database.scalar_text("SELECT status FROM proposals") == "pending");
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 0);
+  CHECK_FALSE(std::filesystem::exists(root / "vault/Markov Chains.md"));
+}
+
+TEST_CASE("invalid user article encoding produces a safe JSON preview diagnostic without modifying bytes", "[review-preview]") {
+  const auto nul = GENERATE(false,true);
+  const auto tracked = GENERATE(false,true);
+  const auto consent = GENERATE(false,true);
+  kc::test::TemporaryDirectory temporary;
+  const auto root = temporary.path() / "project";
+  const auto initialized = kc::storage::initialize_project(init_options(root));
+  kc::storage::Database database(initialized.state_path);
+  const auto fixture = seed_create_proposal(root,database);
+  kc::vault::VaultWriter writer(root);
+  const auto path = root / "vault/Markov Chains.md";
+  auto proposal_id = fixture.proposal_id;
+  if (tracked) {
+    kc::test::approve_preview(writer,fixture.proposal_id);
+    const auto created = writer.apply(fixture.proposal_id);
+    proposal_id = seed_update_proposal(database,fixture.page_id,created.article_id);
+  } else {
+    write_file(path,"Untracked user content.\n");
+  }
+  const auto malformed = read_file(path) + (nul ? std::string("\0",1) : std::string("\xff",1));
+  write_file(path,malformed);
+  const kc::vault::ApplyOptions options{.allow_overwrite_user_file = consent};
+  const auto preview = writer.preview(proposal_id,options);
+  CHECK_FALSE(preview.valid);
+  CHECK(preview.untracked_collision == !tracked);
+  const auto json = kc::vault::preview_json(preview);
+  CHECK_NOTHROW(json.dump());
+  CHECK(json["before"].is_null());
+  CHECK(json["before_sha256"] == kc::source_import::sha256_text(malformed));
+  CHECK_THROWS_AS(writer.approve(proposal_id,preview.token,options),kc::vault::VaultError);
+  CHECK(read_file(path) == malformed);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == (tracked ? 1 : 0));
 }

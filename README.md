@@ -163,8 +163,11 @@ the page `reviewed`:
   --text-file corrected-page.txt
 ```
 
-Corrections are intentionally refused after a proposal cites the page, so
-proposal citation offsets and quotes remain immutable.
+Use `--page N --open-image` to launch the verified page image beside terminal
+text, or `--page N --accept` to mark inspected OCR text reviewed without copying
+it. Corrections to cited pages create new current identities while retaining
+old text, images, and citations, even after rejection. `--force` follows the
+same provenance-preserving revision policy. See [review workflow](docs/REVIEW_EXPERIENCE.md).
 
 The local model layer uses the Ollama settings in `kc.json` to request a
 schema-constrained proposal for the selected concept. It validates the exact
@@ -195,18 +198,31 @@ display title, slug, and filename. Slug collisions and nonportable titles fail
 before model generation. See [concept identity rules](docs/CONCEPT_IDENTITY.md)
 for Windows device names, Unicode behavior, legacy projects, and language limits.
 
+Updates are additive by default: a compilation using only semester B sources
+retains semester A's approved explanations, examples, relationships, and exact
+historical citations. Duplicate visible claims merge citation support. Use
+`compile --concept TITLE --source SOURCE_ID --regenerate` to explicitly propose
+replacement; `proposal show` lists removed and added claims before approval.
+Updates capture the applied article revision and managed bytes. Managed edits
+or another apply invalidate the proposal; compile and review again. Keep manual
+notes outside the markers. See [accumulated knowledge and legacy recovery](docs/ACCUMULATED_KNOWLEDGE.md).
+
 Approve a reviewed proposal, then apply it as a separate operation:
 
 ```bash
 ./build/dev/apps/kc/kc proposal list --status pending
 ./build/dev/apps/kc/kc proposal show prp_01J...
-./build/dev/apps/kc/kc proposal approve prp_01J...
+./build/dev/apps/kc/kc proposal approve prp_01J... --preview PREVIEW_SHA256
 ./build/dev/apps/kc/kc apply prp_01J...
 ```
 
-`proposal show` displays the proposed sections followed by each citation's
-source page evidence. A pending proposal can instead be rejected with
-`proposal reject`; list, show, approve, and reject never edit an article.
+`proposal show` displays exact complete Markdown, a rendered diff, destination,
+collisions/validation issues, and citation evidence. Its copyable approval
+command binds the inspected preview token. `proposal preview` gives a focused
+rendering/diff, including diagnostics for invalid stored state. Use `proposal
+revoke` to return an unused approval to pending; `proposal reject` accepts pending
+or unused approved work. These actions never edit articles. Any changes after
+approval require a fresh preview/approval; unrelated user bytes remain intact.
 
 Approval never changes the vault. Application verifies and copies every cited
 immutable source, renders page-linked footnotes, writes the article through an

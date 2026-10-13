@@ -37,3 +37,14 @@ and destination ownership under the proposal publication transaction.
 
 See [extraction integrity](../../docs/EXTRACTION_INTEGRITY.md) for evidence
 freezing, supported concurrency, and reproduction.
+
+## Accumulated updates
+
+Updates deterministically retain approved blocks, relationships, and historical
+citations before adding new source-grounded content. `--source` filters new
+model evidence; `--regenerate` deliberately proposes complete replacement and
+review lists all removed and added claims. A compiler-owned base apply-run ID
+and managed-region digest guard publication, approval, and apply. Manual notes
+belong outside the markers; managed edits require restoration and fresh review.
+See [update semantics, revision checks, and legacy recovery](../../docs/ACCUMULATED_KNOWLEDGE.md)
+for the exact reconciliation and review JSON contracts.

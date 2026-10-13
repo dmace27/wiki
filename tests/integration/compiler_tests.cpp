@@ -1,5 +1,6 @@
 #include "kc/compiler/compiler.hpp"
 #include "kc/domain/concept.hpp"
+#include "kc/domain/id.hpp"
 #include "kc/search/search_index.hpp"
 #include "kc/extraction/extractor.hpp"
 #include "kc/import/source_importer.hpp"
@@ -239,7 +240,7 @@ TEST_CASE("equal-basename sources remain selectable through revisions and histor
   CHECK(historical.citation_evidence.front().source_version_id == a.version.source_version_id);
   CHECK(historical.citation_evidence.front().extracted_text == old_page.text);
   kc::vault::VaultWriter writer(root);
-  writer.approve(proposal.proposal_id);
+  kc::test::approve_preview(writer, proposal.proposal_id);
   const auto applied = writer.apply(proposal.proposal_id);
   kc::storage::Database database(initialized.state_path);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM article_citations") == 2);
@@ -492,7 +493,7 @@ TEST_CASE("canonical concept requests preserve identity through compile apply an
   const auto first = compiler.compile({.concept_title = "  " + variant.title + "\t",
                                       .source_ids = {imported.source.source_id}});
   kc::vault::VaultWriter writer(project_root);
-  writer.approve(first.proposal_id);
+  kc::test::approve_preview(writer, first.proposal_id);
   const auto created = writer.apply(first.proposal_id);
   const auto original_path = created.vault_path;
   const auto original_title = database.scalar_text("SELECT title FROM articles");
@@ -509,7 +510,7 @@ TEST_CASE("canonical concept requests preserve identity through compile apply an
   CHECK(second.article_id == created.article_id);
   kc::review::ReviewService review(project_root);
   CHECK(review.review_proposal(second.proposal_id).proposal.article.title == original_title);
-  writer.approve(second.proposal_id);
+  kc::test::approve_preview(writer, second.proposal_id);
   const auto updated = writer.apply(second.proposal_id);
   CHECK(updated.article_id == created.article_id);
   CHECK(updated.vault_path == original_path);
@@ -538,7 +539,7 @@ TEST_CASE("pending creates share canonical Unicode identity without superseding 
   state->response = create_proposal(page_id, 14U, "Café", "caf").dump();
   const auto first = compiler.compile({.concept_title = "Cafe\u0301"});
   kc::vault::VaultWriter writer(project_root);
-  writer.approve(first.proposal_id);
+  kc::test::approve_preview(writer, first.proposal_id);
   state->response = create_proposal(page_id, 14U, "Biology", "biology").dump();
   const auto unrelated = compiler.compile({.concept_title = "Biology"});
   state->response = create_proposal(page_id, 14U, "Café", "caf").dump();
@@ -568,7 +569,7 @@ TEST_CASE("distinct-title slug collisions fail before model generation") {
   const auto first = compiler.compile({.concept_title = "A-B"});
   if (apply_first) {
     kc::vault::VaultWriter writer(project_root);
-    writer.approve(first.proposal_id);
+    kc::test::approve_preview(writer, first.proposal_id);
     static_cast<void>(writer.apply(first.proposal_id));
   }
   try {
@@ -673,27 +674,26 @@ TEST_CASE("Unicode legacy articles retain their original slug and destination") 
   const auto imported = import_and_extract(project_root, temporary.path() / "notes.md",
                                            "A Markov chain supports Биология.\n");
   kc::storage::Database database(initialized.state_path);
-  // A pre-task-3 opaque slug and custom vault path must not be regenerated.
-  database.execute("INSERT INTO articles(article_id,title,slug,vault_path,created_at,updated_at) "
-                   "VALUES ('art_01J00000000000000000000000','Биология','concept-legacy',"
-                   "'vault/Original.md','t','t')");
-  // Use the project's actual ownership marker rather than a fixture assumption.
-  auto config = kc::test::read_json(project_root / "kc.json");
-  write_file(project_root / "vault" / "Original.md",
-      "---\nkc_schema: 1\narticle_id: art_01J00000000000000000000000\n"
-      "title: Биология\naliases: []\n---\n# Биология\n\n<!-- kc:managed:start id=\"" +
-      config["vault"]["generated_section_id"].get<std::string>() +
-      "\" -->\nold\n<!-- kc:managed:end -->\n");
+  // Use real applied history, then emulate a legacy custom slug/destination.
   auto state = std::make_shared<ModelState>();
+  state->response = create_proposal(database.scalar_text("SELECT page_id FROM source_pages"),
+      14U, "Биология", kc::domain::canonical_concept_slug("Биология")).dump();
+  kc::compiler::Compiler initial_compiler(project_root, std::make_unique<StaticLanguageModel>(state));
+  const auto first = initial_compiler.compile({.concept_title = "Биология"});
+  kc::vault::VaultWriter initial_writer(project_root);
+  kc::test::approve_preview(initial_writer, first.proposal_id);
+  const auto created = initial_writer.apply(first.proposal_id);
+  std::filesystem::rename(project_root / created.vault_path, project_root / "vault/Original.md");
+  database.execute("UPDATE articles SET slug = 'concept-legacy', vault_path = 'vault/Original.md'");
   auto payload = create_proposal(database.scalar_text("SELECT page_id FROM source_pages"),
                                   14U, "Биология", "concept-legacy");
   payload["operation"] = "update_article";
-  payload["article"]["article_id"] = "art_01J00000000000000000000000";
+  payload["article"]["article_id"] = created.article_id.value;
   state->response = payload.dump();
   kc::compiler::Compiler compiler(project_root, std::make_unique<StaticLanguageModel>(state));
   const auto compiled = compiler.compile({.concept_title = "БИОЛОГИЯ"});
   kc::vault::VaultWriter writer(project_root);
-  writer.approve(compiled.proposal_id);
+  kc::test::approve_preview(writer, compiled.proposal_id);
   CHECK(writer.apply(compiled.proposal_id).vault_path == "vault/Original.md");
   CHECK(database.scalar_text("SELECT slug FROM articles") == "concept-legacy");
   static_cast<void>(imported);
@@ -759,7 +759,7 @@ TEST_CASE("biology history and programming articles create and update with consi
     payload["article"]["aliases"] = nlohmann::json::array({"InitialAlias", "光合成"});
     state->response = payload.dump();
     const auto proposed = compiler.compile(options);
-    writer.approve(proposed.proposal_id);
+    kc::test::approve_preview(writer, proposed.proposal_id);
     const auto created = writer.apply(proposed.proposal_id);
     const auto path = root / created.vault_path;
     std::ifstream input(path);
@@ -784,7 +784,7 @@ TEST_CASE("biology history and programming articles create and update with consi
     payload["sections"][0]["blocks"][0]["text"] = topic.explanation + " Updated explanation.";
     state->response = payload.dump();
     const auto update = compiler.compile(options);
-    writer.approve(update.proposal_id);
+    kc::test::approve_preview(writer, update.proposal_id);
     const auto applied = writer.apply(update.proposal_id);
     CHECK(applied.article_id == created.article_id);
     std::ifstream updated_input(path);
@@ -880,11 +880,358 @@ TEST_CASE("repeated section keys preserve distinct cited blocks through apply") 
   kc::review::ReviewService review(root);
   CHECK(review.review_proposal(proposal.proposal_id).proposal.sections.size() == 2U);
   kc::vault::VaultWriter writer(root);
-  writer.approve(proposal.proposal_id);
+  kc::test::approve_preview(writer, proposal.proposal_id);
   const auto applied = writer.apply(proposal.proposal_id);
   std::ifstream input(root / applied.vault_path);
   const std::string content{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
   CHECK(content.find("## Another working example") != std::string::npos);
   CHECK(content.find("A second supported example") != std::string::npos);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM article_citations WHERE section_key = 'working_explanation'") == 2);
+}
+
+namespace {
+
+std::string read_article(const std::filesystem::path& path) {
+  std::ifstream input(path, std::ios::binary);
+  return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+/// Complete deterministic article lifecycle; model output still crosses the
+/// production parser, exact-span validator, compiler, reviewer, and writer.
+struct UpdateFixture {
+  kc::test::TemporaryDirectory temporary;
+  std::filesystem::path root{temporary.path() / "project"};
+  kc::storage::InitResult initialized{kc::storage::initialize_project(init_options(root))};
+  kc::storage::Database database{initialized.state_path};
+  std::shared_ptr<ModelState> state{std::make_shared<ModelState>()};
+  kc::compiler::Compiler compiler{root, std::make_unique<StaticLanguageModel>(state)};
+  kc::vault::VaultWriter writer{root};
+  kc::review::ReviewService reviewer{root};
+  kc::source_import::ImportResult semester_a{import_and_extract(root,
+      temporary.path() / "semester-a.md", "A Markov chain has earlier learning and an example.")};
+  kc::domain::ArticleId article_id;
+  std::filesystem::path article_path;
+
+  nlohmann::json contribution(const kc::domain::SourceId& source_id,
+      const std::string& text, const std::string& related_title = "Earlier Relationship") {
+    const auto page = compiler.select_evidence({.concept_title = "Markov Chains", .source_ids = {source_id}}).front();
+    auto payload = create_proposal(page.page_id.value);
+    const nlohmann::json citation{{"page_id", page.page_id.value}, {"start_char", 0},
+        {"end_char", page.text.size()}, {"quote", page.text}};
+    payload["sections"][0]["blocks"][0]["text"] = text;
+    payload["sections"][0]["blocks"][0]["citations"] = nlohmann::json::array({citation});
+    payload["related_concepts"][0]["title"] = related_title;
+    payload["related_concepts"][0]["reason"] = "A supported relationship from these notes.";
+    payload["related_concepts"][0]["citations"] = nlohmann::json::array({citation});
+    if (!article_id.value.empty()) {
+      payload["operation"] = "update_article";
+      payload["article"]["article_id"] = article_id.value;
+    }
+    return payload;
+  }
+
+  UpdateFixture() {
+    auto payload = contribution(semester_a.source.source_id, "EarlierKnowledge explanation.");
+    auto example = payload["sections"][0];
+    example["key"] = "example";
+    example["heading"] = "Earlier example";
+    example["blocks"][0]["text"] = "EarlierExample remains useful.";
+    payload["sections"].push_back(example);
+    state->response = payload.dump();
+    const auto initial = compiler.compile({.concept_title = "Markov Chains", .source_ids = {semester_a.source.source_id}});
+    kc::test::approve_preview(writer, initial.proposal_id);
+    const auto applied = writer.apply(initial.proposal_id);
+    article_id = applied.article_id;
+    article_path = root / applied.vault_path;
+  }
+
+  kc::compiler::CompileResult update(const kc::domain::SourceId& source_id,
+      const std::string& text = "LaterKnowledge adds a supported claim.", bool regenerate = false) {
+    state->response = contribution(source_id, text, "Later Relationship").dump();
+    return compiler.compile({.concept_title = "Markov Chains", .source_ids = {source_id}, .regenerate = regenerate});
+  }
+};
+}  // namespace
+
+TEST_CASE("semester B updates accumulate historical claims examples relationships and exact citations", "[updates]") {
+  const auto revise_same_source = GENERATE(false, true);
+  UpdateFixture fixture;
+  const auto old_page = fixture.database.scalar_text("SELECT page_id FROM source_pages");
+  const auto old_version = fixture.semester_a.version.source_version_id;
+  const auto b = import_and_extract(fixture.root, fixture.temporary.path() / "semester-b.md",
+      "A Markov chain has later learning and a new relationship.",
+      revise_same_source ? kc::source_import::ImportOptions{.source_id = fixture.semester_a.source.source_id}
+                         : kc::source_import::ImportOptions{});
+  if (!revise_same_source) {
+    fixture.database.execute("UPDATE sources SET archived_at = 't' WHERE source_id = '" + fixture.semester_a.source.source_id.value + "'");
+  }
+  // Notes before compilation and after approval must survive byte-for-byte.
+  const auto outside = "\n## My own notes\nSurroundingUserText stays exactly as written.\n";
+  write_file(fixture.article_path, read_article(fixture.article_path) + outside);
+  const auto proposal = fixture.update(b.source.source_id);
+  CHECK(proposal.selected_page_count == 1U);
+  const auto review = fixture.reviewer.review_proposal(proposal.proposal_id);
+  REQUIRE(review.update_changes);
+  CHECK(review.update_changes->at("mode") == "additive");
+  CHECK(review.update_changes->at("removed_claims").empty());
+  CHECK(review.update_changes->at("retained_claim_count") == 3U);
+  CHECK(review.update_changes->at("added_claims").size() == 2U);
+  CHECK(fixture.state->prompts.back().find(old_page) == std::string::npos);
+  CHECK(fixture.state->prompts.back().find("additive update") != std::string::npos);
+  bool found_historical = false;
+  for (const auto& evidence : review.citation_evidence) {
+    const auto& citation = evidence.citation;
+    CHECK(evidence.extracted_text.substr(citation.start_char, citation.end_char - citation.start_char) == citation.quote);
+    if (citation.page_id.value == old_page) {
+      found_historical = true;
+      CHECK(evidence.source_version_id == old_version);
+    }
+  }
+  CHECK(found_historical);
+  kc::test::approve_preview(fixture.writer, proposal.proposal_id);
+  const auto more_notes = "\nA later user addition.\n";
+  write_file(fixture.article_path, read_article(fixture.article_path) + more_notes);
+  CHECK_THROWS_AS(fixture.writer.apply(proposal.proposal_id), kc::vault::VaultError);
+  // Task 8 requires renewed approval of the complete preview after any user
+  // bytes change; those bytes remain untouched by the failed attempt.
+  fixture.reviewer.revoke_approval(proposal.proposal_id);
+  kc::test::approve_preview(fixture.writer, proposal.proposal_id);
+  static_cast<void>(fixture.writer.apply(proposal.proposal_id));
+  const auto content = read_article(fixture.article_path);
+  CHECK(content.ends_with(std::string(outside) + more_notes));
+  for (const auto& claim : {"EarlierKnowledge", "EarlierExample", "Earlier Relationship", "LaterKnowledge", "Later Relationship"}) {
+    CHECK(content.find(claim) != std::string::npos);
+  }
+  CHECK(fixture.database.scalar_integer("SELECT COUNT(DISTINCT page_id) FROM article_citations") == 2);
+  kc::search::SearchIndex search(fixture.root);
+  CHECK(search.search("EarlierKnowledge").size() == 1U);
+  CHECK(search.search("LaterKnowledge").size() == 1U);
+}
+
+TEST_CASE("duplicate additions merge citations and repeated compilation is content idempotent", "[updates]") {
+  UpdateFixture fixture;
+  const auto b = import_and_extract(fixture.root, fixture.temporary.path() / "semester-b.md",
+      "A Markov chain supports the same earlier knowledge.");
+  auto additions = fixture.contribution(b.source.source_id, "EarlierKnowledge explanation.");
+  // Same visible claim with different whitespace and heading still retains the
+  // approved heading. Duplicates within a single model response also collapse.
+  additions["sections"][0]["heading"] = "Another heading";
+  additions["sections"][0]["blocks"][0]["text"] = "EarlierKnowledge\n explanation.";
+  additions["sections"].push_back(additions["sections"][0]);
+  fixture.state->response = additions.dump();
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    const auto proposal = fixture.compiler.compile({.concept_title = "Markov Chains", .source_ids = {b.source.source_id}});
+    const auto review = fixture.reviewer.review_proposal(proposal.proposal_id);
+    REQUIRE(review.proposal.sections.size() == 2U);
+    CHECK(review.proposal.sections[0].heading == "My working explanation");
+    CHECK(review.proposal.sections[0].blocks.size() == 1U);
+    CHECK(review.proposal.sections[0].blocks[0].citations.size() == 2U);
+    REQUIRE(review.proposal.related_concepts.size() == 1U);
+    CHECK(review.proposal.related_concepts[0].citations.size() == 2U);
+    CHECK(review.update_changes->at("removed_claims").empty());
+    if (attempt == 1) CHECK(review.update_changes->at("added_claims").empty());
+    const auto before = read_article(fixture.article_path);
+    kc::test::approve_preview(fixture.writer, proposal.proposal_id);
+    static_cast<void>(fixture.writer.apply(proposal.proposal_id));
+    if (attempt == 1) CHECK(read_article(fixture.article_path) == before);
+  }
+}
+
+TEST_CASE("explicit regeneration exposes removed and replacement claims before approval", "[updates]") {
+  UpdateFixture fixture;
+  const auto b = import_and_extract(fixture.root, fixture.temporary.path() / "semester-b.md",
+      "A Markov chain supports a corrected explanation.");
+  const auto original = read_article(fixture.article_path);
+  const auto proposal = fixture.update(b.source.source_id, "CorrectedKnowledge replaces earlier claims.", true);
+  const auto review = fixture.reviewer.review_proposal(proposal.proposal_id);
+  REQUIRE(review.update_changes);
+  CHECK(review.update_changes->at("mode") == "regenerate");
+  CHECK(review.update_changes->at("removed_claims").size() == 3U);
+  CHECK(review.update_changes->at("added_claims").size() == 2U);
+  CHECK(review.update_changes->at("removed_claims").dump().find("EarlierExample") != std::string::npos);
+  CHECK(review.update_changes->at("removed_claims").dump().find("Earlier Relationship") != std::string::npos);
+  CHECK(read_article(fixture.article_path) == original);
+  kc::test::approve_preview(fixture.writer, proposal.proposal_id);
+  CHECK(read_article(fixture.article_path) == original);
+  static_cast<void>(fixture.writer.apply(proposal.proposal_id));
+  const auto content = read_article(fixture.article_path);
+  CHECK(content.find("EarlierKnowledge") == std::string::npos);
+  CHECK(content.find("EarlierExample") == std::string::npos);
+  CHECK(content.find("CorrectedKnowledge") != std::string::npos);
+  CHECK(fixture.database.scalar_integer("SELECT COUNT(DISTINCT page_id) FROM article_citations") == 1);
+}
+
+TEST_CASE("manual managed changes invalidate compile approval and apply without touching user bytes", "[updates]") {
+  const auto stage = GENERATE("compile", "approve", "apply");
+  UpdateFixture fixture;
+  const auto original = read_article(fixture.article_path);
+  std::optional<kc::compiler::CompileResult> proposal;
+  if (std::string_view(stage) != "compile") proposal = fixture.update(fixture.semester_a.source.source_id);
+  if (std::string_view(stage) == "apply") kc::test::approve_preview(fixture.writer, proposal->proposal_id);
+  auto manual = original;
+  manual.insert(manual.find("EarlierKnowledge"), "My manual managed edit. ");
+  write_file(fixture.article_path, manual);
+  if (std::string_view(stage) == "compile") {
+    CHECK_THROWS_AS(fixture.update(fixture.semester_a.source.source_id), kc::compiler::CompilerError);
+    CHECK(fixture.state->prompts.size() == 1U);
+  } else if (std::string_view(stage) == "approve") {
+    CHECK_THROWS_AS(kc::test::approve_preview(fixture.writer, proposal->proposal_id), kc::vault::VaultError);
+  } else {
+    CHECK_THROWS_AS(fixture.writer.apply(proposal->proposal_id), kc::vault::VaultError);
+  }
+  CHECK(read_article(fixture.article_path) == manual);
+  CHECK(fixture.database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 1);
+  // Restoring only compiler-owned bytes permits a fresh review and update.
+  write_file(fixture.article_path, original + "\nPreserved manual note outside markers.\n");
+  const auto fresh = fixture.update(fixture.semester_a.source.source_id);
+  kc::test::approve_preview(fixture.writer, fresh.proposal_id);
+  static_cast<void>(fixture.writer.apply(fresh.proposal_id));
+  CHECK(read_article(fixture.article_path).ends_with("Preserved manual note outside markers.\n"));
+}
+
+TEST_CASE("changes to the base during generation cannot publish or supersede pending updates", "[updates]") {
+  const auto managed_edit = GENERATE(false, true);
+  UpdateFixture fixture;
+  const auto pending = fixture.update(fixture.semester_a.source.source_id);
+  const auto original = read_article(fixture.article_path);
+  fixture.state->during_generation = [&] {
+    if (managed_edit) {
+      auto edited = original;
+      edited.insert(edited.find("EarlierKnowledge"), "Edited. ");
+      write_file(fixture.article_path, edited);
+    } else {
+      // Another approved apply changes the revision while the model is running.
+      kc::test::approve_preview(fixture.writer, pending.proposal_id);
+      static_cast<void>(fixture.writer.apply(pending.proposal_id));
+    }
+  };
+  CHECK_THROWS_AS(fixture.update(fixture.semester_a.source.source_id), kc::compiler::CompilerError);
+  CHECK(fixture.database.scalar_integer("SELECT COUNT(*) FROM proposals") == 2);
+  if (managed_edit) CHECK(fixture.database.scalar_text("SELECT status FROM proposals WHERE proposal_id = '" + pending.proposal_id.value + "'") == "pending");
+}
+
+TEST_CASE("base revision prevents old approvals even when applied content returns to identical bytes", "[updates]") {
+  UpdateFixture fixture;
+  const auto proposal = fixture.update(fixture.semester_a.source.source_id);
+  kc::test::approve_preview(fixture.writer, proposal.proposal_id);
+  const auto original = read_article(fixture.article_path);
+  // Emulate another process publishing an identical approved article. No byte
+  // comparison alone can distinguish this intervening article revision.
+  const auto competing = kc::domain::generate_proposal_id().value;
+  fixture.database.execute("INSERT INTO proposals(proposal_id,article_id,operation,payload_json,status,created_at) "
+      "SELECT '" + competing + "',article_id,operation,payload_json,'applied','t' FROM proposals WHERE status = 'applied'");
+  fixture.database.execute("INSERT INTO apply_runs(apply_run_id,proposal_id,article_id,new_content_sha256,managed_sha256,applied_at) "
+      "SELECT '" + kc::domain::generate_run_id().value + "','" + competing + "',article_id,new_content_sha256,managed_sha256,'t' FROM apply_runs ORDER BY rowid LIMIT 1");
+  CHECK_THROWS_AS(fixture.writer.apply(proposal.proposal_id), kc::vault::VaultError);
+  CHECK(read_article(fixture.article_path) == original);
+  CHECK(fixture.database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 2);
+}
+
+TEST_CASE("legacy proposals without bases and missing applied history cannot silently replace knowledge", "[updates]") {
+  UpdateFixture fixture;
+  const auto proposal = fixture.update(fixture.semester_a.source.source_id);
+  fixture.database.execute("DELETE FROM proposal_update_bases");
+  CHECK_THROWS_AS(fixture.reviewer.review_proposal(proposal.proposal_id), kc::review::ReviewError);
+  CHECK_THROWS_AS(kc::test::approve_preview(fixture.writer, proposal.proposal_id), kc::vault::VaultError);
+  fixture.database.execute("UPDATE proposals SET status = 'approved' WHERE status = 'pending'");
+  CHECK_THROWS_AS(fixture.writer.apply(proposal.proposal_id), kc::vault::VaultError);
+  fixture.database.execute("DELETE FROM apply_runs");
+  CHECK_THROWS_AS(fixture.update(fixture.semester_a.source.source_id), kc::compiler::CompilerError);
+}
+
+TEST_CASE("legacy applied articles upgrade without reconstructing an unverified base", "[updates]") {
+  const auto surrounding_edits = GENERATE(false, true);
+  UpdateFixture fixture;
+  fixture.database.execute("UPDATE apply_runs SET managed_sha256 = NULL");
+  if (surrounding_edits) {
+    write_file(fixture.article_path, read_article(fixture.article_path) + "\nLegacy user notes.\n");
+    CHECK_THROWS_AS(fixture.update(fixture.semester_a.source.source_id), kc::compiler::CompilerError);
+  } else {
+    const auto proposal = fixture.update(fixture.semester_a.source.source_id);
+    kc::test::approve_preview(fixture.writer, proposal.proposal_id);
+    static_cast<void>(fixture.writer.apply(proposal.proposal_id));
+    CHECK(fixture.database.scalar_integer("SELECT COUNT(*) FROM apply_runs WHERE managed_sha256 IS NOT NULL") == 1);
+    CHECK(read_article(fixture.article_path).find("EarlierKnowledge") != std::string::npos);
+  }
+}
+
+TEST_CASE("additive update contracts reject removal even if stored payload is corrupted", "[updates]") {
+  UpdateFixture fixture;
+  const auto proposal = fixture.update(fixture.semester_a.source.source_id);
+  // Direct DB edits are unsupported, but review/approval/apply must still fail
+  // closed if an additive payload loses an earlier example or relationship.
+  fixture.database.execute("UPDATE proposals SET payload_json = json_remove(payload_json,'$.sections[1]') "
+      "WHERE proposal_id = '" + proposal.proposal_id.value + "'");
+  CHECK_THROWS_AS(fixture.reviewer.review_proposal(proposal.proposal_id), kc::review::ReviewError);
+  CHECK_THROWS_AS(kc::test::approve_preview(fixture.writer, proposal.proposal_id), kc::vault::VaultError);
+  fixture.database.execute("UPDATE proposals SET status = 'approved' WHERE status = 'pending'");
+  CHECK_THROWS_AS(fixture.writer.apply(proposal.proposal_id), kc::vault::VaultError);
+  CHECK(fixture.database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 1);
+}
+
+TEST_CASE("legacy historical update proposals remain inspectable with an explicitly unknown base", "[updates]") {
+  UpdateFixture fixture;
+  const auto proposal = fixture.update(fixture.semester_a.source.source_id);
+  kc::test::approve_preview(fixture.writer, proposal.proposal_id);
+  static_cast<void>(fixture.writer.apply(proposal.proposal_id));
+  fixture.database.execute("DELETE FROM proposal_update_bases");
+  const auto review = fixture.reviewer.review_proposal(proposal.proposal_id);
+  REQUIRE(review.update_changes);
+  CHECK(review.update_changes->at("mode") == "legacy_unverified");
+  CHECK(review.update_changes->at("removed_claims").is_null());
+  CHECK_FALSE(review.citation_evidence.empty());
+}
+
+TEST_CASE("B-only updates verify retained A evidence before publishing accumulated claims", "[updates]") {
+  const auto corruption = GENERATE("source", "text", "missing");
+  CAPTURE(corruption);
+  UpdateFixture fixture;
+  const auto b = import_and_extract(fixture.root, fixture.temporary.path() / "semester-b.md",
+      "A Markov chain supplies later evidence.");
+  const auto original = read_article(fixture.article_path);
+  const auto retained_path = fixture.root / fixture.semester_a.version.stored_path;
+  if (std::string_view(corruption) == "source") {
+    // Retained imports are read-only; deliberately break that protection to
+    // simulate corruption rather than silently failing to modify the fixture.
+    std::filesystem::permissions(retained_path, std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::add);
+    write_file(retained_path, "Tampered retained source bytes.");
+    REQUIRE(read_article(retained_path) == "Tampered retained source bytes.");
+  } else if (std::string_view(corruption) == "missing") {
+    std::filesystem::remove(retained_path);
+  } else {
+    fixture.database.execute("UPDATE source_pages SET text = 'Changed historical text.' WHERE source_version_id = '" +
+                             fixture.semester_a.version.source_version_id.value + "'");
+  }
+  CHECK_THROWS_AS(fixture.update(b.source.source_id), kc::compiler::CompilerError);
+  CHECK(fixture.database.scalar_integer("SELECT COUNT(*) FROM proposals") == 1);
+  CHECK(fixture.database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 1);
+  CHECK(read_article(fixture.article_path) == original);
+}
+
+TEST_CASE("an extraction mistake found after rejection can be corrected recompiled and previewed without losing history", "[review-preview]") {
+  UpdateFixture fixture;
+  const auto original_page = fixture.compiler.select_evidence({.concept_title="Markov Chains", .source_ids={fixture.semester_a.source.source_id}}).front();
+  const auto rejected = fixture.update(fixture.semester_a.source.source_id);
+  fixture.reviewer.reject_proposal(rejected.proposal_id,"Discovered an extraction error");
+  const auto correction = fixture.reviewer.correct_page_text(fixture.semester_a.source.source_id,1,
+      "A Markov chain has corrected reviewed learning.");
+  REQUIRE(correction.page_id != original_page.page_id);
+  const auto selected = fixture.compiler.select_evidence({.concept_title="Markov Chains", .source_ids={fixture.semester_a.source.source_id}});
+  REQUIRE(selected.size() == 1U);
+  CHECK(selected.front().page_id == correction.page_id);
+  CHECK(selected.front().text_status == kc::domain::TextStatus::reviewed);
+  const auto history = fixture.reviewer.review_proposal(rejected.proposal_id);
+  CHECK(history.citation_evidence.front().extracted_text == original_page.text);
+  CHECK(history.citation_evidence.front().citation.page_id == original_page.page_id);
+  const auto replacement = fixture.update(fixture.semester_a.source.source_id,"Corrected approved explanation.",true);
+  const auto review = fixture.reviewer.review_proposal(replacement.proposal_id);
+  REQUIRE(review.preview.valid);
+  for (const auto& evidence : review.citation_evidence) CHECK(evidence.citation.page_id == correction.page_id);
+  const auto before = read_article(fixture.article_path);
+  fixture.writer.approve(replacement.proposal_id,review.preview.token);
+  CHECK(read_article(fixture.article_path) == before);
+  static_cast<void>(fixture.writer.apply(replacement.proposal_id));
+  CHECK(read_article(fixture.article_path) == review.preview.after);
+  CHECK(fixture.reviewer.review_proposal(rejected.proposal_id).citation_evidence.front().extracted_text == original_page.text);
 }

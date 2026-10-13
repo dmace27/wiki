@@ -2,6 +2,7 @@
 # proposal into a user-owned Markdown file.
 add_library(kc_vault STATIC
   src/vault_writer.cpp
+  src/rendering.cpp
 )
 
 add_library(kc::vault ALIAS kc_vault)
@@ -17,6 +18,7 @@ target_link_libraries(
   kc_vault
   PUBLIC kc::domain
   PRIVATE
+    kc::updates
     kc::import
     kc::storage
     nlohmann_json::nlohmann_json

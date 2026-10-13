@@ -390,10 +390,13 @@ TEST_CASE("published generation freezes every selected page including uncited co
   kc::storage::Database database(fixture.initialized.state_path);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposal_evidence") == 2);
   CHECK(database.scalar_integer("SELECT COUNT(DISTINCT page_id) FROM proposal_citations") == 1);
-  CHECK_THROWS_AS(kc::review::ReviewService(fixture.root).correct_page_text(
-      imported.source.source_id, 1, "changed uncited context"), kc::review::ReviewError);
-  CHECK_THROWS_AS(kc::extraction::Extractor(fixture.root).extract(imported.source.source_id, true),
-                  kc::extraction::ExtractionError);
+  const auto historic = database.scalar_text("SELECT page_id FROM proposal_evidence WHERE page_id NOT IN (SELECT page_id FROM proposal_citations)");
+  const auto correction = kc::review::ReviewService(fixture.root).correct_page_text(
+      imported.source.source_id, 1, "changed uncited context");
+  CHECK(correction.page_id.value != historic);
+  CHECK(database.scalar_text("SELECT text FROM source_pages WHERE page_id = '" + historic + "'") == "Markov Chains additional context.");
+  CHECK_NOTHROW(kc::extraction::Extractor(fixture.root).extract(imported.source.source_id, true));
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposal_evidence") == 2);
 }
 
 #if !defined(_WIN32)
@@ -485,3 +488,24 @@ TEST_CASE("two-process extraction cannot overwrite concurrently compiled correct
   CHECK(std::filesystem::is_empty(fixture.root / ".knowledge-compiler/extraction-staging"));
 }
 #endif
+
+TEST_CASE("proposal preview validates frozen uncited model context before approval", "[review-preview]") {
+  Fixture fixture(false);
+  const auto extra = fixture.temporary.path() / "Context.txt";
+  write_bytes(extra,"Markov Chains additional context.");
+  const auto imported = kc::source_import::SourceImporter(fixture.root).import_file(extra);
+  static_cast<void>(kc::extraction::Extractor(fixture.root).extract(imported.source.source_id));
+  const auto proposal = compile(fixture);
+  kc::vault::VaultWriter writer(fixture.root);
+  const auto before = writer.preview(proposal.proposal_id);
+  REQUIRE(before.valid);
+  kc::storage::Database database(fixture.initialized.state_path);
+  database.execute("UPDATE source_pages SET evidence_revision=evidence_revision+1 WHERE source_version_id='" + imported.version.source_version_id.value + "'");
+  const auto invalid = writer.preview(proposal.proposal_id);
+  CHECK_FALSE(invalid.valid);
+  REQUIRE_FALSE(invalid.issues.empty());
+  CHECK(invalid.issues.front().message.find("captured proposal evidence changed") != std::string::npos);
+  CHECK_THROWS_AS(writer.approve(proposal.proposal_id,before.token),kc::vault::VaultError);
+  CHECK(database.scalar_text("SELECT status FROM proposals") == "pending");
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM apply_runs") == 0);
+}

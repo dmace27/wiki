@@ -15,6 +15,9 @@ class StorageError : public std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
+/// Select the SQLite capability required by the caller.
+enum class OpenMode { read_write, read_only };
+
 /// Owns one SQLite connection using RAII.
 ///
 /// Constructing opens the database and enables foreign-key enforcement;
@@ -22,8 +25,9 @@ class StorageError : public std::runtime_error {
 /// close the same connection, while moving safely transfers ownership.
 class Database {
  public:
-  /// Open `path`, creating the database file if it does not exist.
-  explicit Database(const std::filesystem::path& path);
+  /// Open `path`. Read-write mode creates missing files; read-only mode
+  /// refuses missing files and SQLite rejects every mutation.
+  explicit Database(const std::filesystem::path& path, OpenMode mode = OpenMode::read_write);
   /// Close the owned SQLite connection.
   ~Database();
 

@@ -127,7 +127,7 @@ TEST_CASE("Ollama settings, schema prompt, and completed runs are audited") {
   CHECK(database.scalar_text("SELECT model FROM model_runs") ==
         "fixture-gemma:1b");
   CHECK(database.scalar_text("SELECT prompt_version FROM model_runs") ==
-        "concept-v1");
+        "concept-v2");
   CHECK(database.scalar_text("SELECT status FROM model_runs") == "completed");
   CHECK(database.scalar_text("SELECT request_sha256 FROM model_runs").size() ==
         64);

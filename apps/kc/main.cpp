@@ -7,6 +7,7 @@
 #include "kc/search/search_index.hpp"
 #include "kc/storage/project_initializer.hpp"
 #include "kc/vault/vault_writer.hpp"
+#include "kc/vault/preview.hpp"
 
 #include <CLI/CLI.hpp>
 #include <nlohmann/json.hpp>
@@ -181,11 +182,33 @@ nlohmann::json extraction_failure_json(
         {"page_count", result.pages.size()}}}};
 }
 
+/// Quote a path for a copyable terminal command without interpreting it.
+/// Native macOS/Linux workflows use POSIX shells; apostrophes remain literal.
+std::string terminal_argument(std::string_view value) {
+  std::string result{"'"};
+  for (const auto character : value) {
+    if (character == '\'') {
+#if defined(_WIN32)
+      result += "''";  // PowerShell literal single-quoted string.
+#else
+      result += "'\\''";  // Close/reopen the POSIX single-quoted string.
+#endif
+    }
+    else result.push_back(character);
+  }
+  return result + "'";
+}
+
+std::string project_command(const std::filesystem::path& project) {
+  return "kc --project " + terminal_argument(kc::domain::path_to_utf8(std::filesystem::absolute(project)));
+}
+
 /// Serialize extraction evidence without separating image, text, and status.
 nlohmann::json extraction_review_success_json(
     const kc::review::ExtractionReview& review,
     const std::optional<kc::review::PageCorrectionResult>& correction,
-    const std::optional<std::uint32_t> selected_page) {
+    const std::optional<std::uint32_t> selected_page,
+    const std::filesystem::path& project_root) {
   auto pages = nlohmann::json::array();
   for (const auto& page : review.pages) {
     if (selected_page && page.page_number != *selected_page) {
@@ -198,6 +221,8 @@ nlohmann::json extraction_review_success_json(
     pages.push_back({{"page_id", page.page_id.value},
                      {"page_number", page.page_number},
                      {"image_path", std::move(image_path)},
+                     {"image_absolute_path", page.image_path ? nlohmann::json(kc::domain::path_to_utf8(std::filesystem::absolute(project_root / *page.image_path))) : nlohmann::json(nullptr)},
+                     {"open_image_command", page.image_path ? nlohmann::json(project_command(project_root) + " review extraction " + review.source_id.value + " --page " + std::to_string(page.page_number) + " --open-image") : nlohmann::json(nullptr)},
                      {"text", page.text},
                      {"text_status", kc::domain::to_string(page.text_status)}});
   }
@@ -206,7 +231,8 @@ nlohmann::json extraction_review_success_json(
   if (correction) {
     corrected = {{"page_id", correction->page_id.value},
                  {"page_number", correction->page_number},
-                 {"text_sha256", correction->text_sha256}};
+                 {"text_sha256", correction->text_sha256},
+                 {"previous_page_id", correction->previous_page_id ? nlohmann::json(correction->previous_page_id->value) : nlohmann::json(nullptr)}};
   }
   return {{"ok", true},
           {"command", "review extraction"},
@@ -288,7 +314,23 @@ nlohmann::json proposal_review_success_json(
           {"result",
            {{"summary", proposal_summary_json(review.summary)},
             {"proposal", proposal},
+            {"preview", kc::vault::preview_json(review.preview)},
+            {"update_changes", review.update_changes.value_or(nlohmann::json(nullptr))},
             {"citation_evidence", std::move(evidence)}}}};
+}
+
+/// Display the complete rendering and unified diff, including compiler-owned
+/// metadata/footnotes and preserved user boundaries, before any approval.
+void print_preview(const kc::vault::ArticlePreview& preview, const std::filesystem::path& project) {
+  std::cout << "\nDestination: " << kc::domain::path_to_utf8(preview.destination)
+            << "\nUntracked collision: " << (preview.untracked_collision ? "yes" : "no") << '\n';
+  for (const auto& issue : preview.issues) std::cout << "Validation: " << issue.message << '\n';
+  if (preview.after) std::cout << "\nExact proposed Markdown\n" << *preview.after;
+  std::cout << "\nRendered diff\n" << (!preview.after ? "(diff unavailable: rendering failed validation)\n"
+                : preview.diff.empty() ? "(no content changes)\n" : preview.diff);
+  if (preview.valid) std::cout << "\nApprove exact preview: " << project_command(project) << " proposal approve " << preview.proposal_id.value
+      << " --preview " << preview.token << (preview.allow_overwrite_user_file ? " --allow-overwrite-user-file" : "") << '\n';
+  if (preview.matches_approval && !*preview.matches_approval) std::cout << "Approval is stale; revoke, preview, and approve again.\n";
 }
 
 /// Build the machine-readable result for a rejection review decision.
@@ -633,6 +675,9 @@ int main(const int argc, char** argv) {
   compile_command->fallthrough();
   std::string concept_title;
   std::vector<std::string> compile_source_ids;
+  bool regenerate_concept = false;
+  compile_command->add_flag("--regenerate", regenerate_concept,
+      "Explicitly replace approved content; proposal show lists removals (default: additive)");
   compile_command->add_option("--concept", concept_title, "Concept title")
       ->required();
   compile_command
@@ -651,6 +696,8 @@ int main(const int argc, char** argv) {
   std::uint32_t review_page_number = 0;
   std::string correction_text;
   std::filesystem::path correction_text_file;
+  bool accept_extraction_text = false;
+  bool open_extraction_image = false;
   review_extraction_command
       ->add_option("SOURCE_ID", review_source_id, "Imported source ID")
       ->required();
@@ -664,6 +711,11 @@ int main(const int argc, char** argv) {
       "Read replacement text exactly from a UTF-8 file");
   correction_text_option->needs(review_page_option)->excludes(correction_file_option);
   correction_file_option->needs(review_page_option)->excludes(correction_text_option);
+
+  review_extraction_command->add_flag("--accept", accept_extraction_text,
+      "Record reviewed text unchanged")->needs(review_page_option)->excludes(correction_text_option)->excludes(correction_file_option);
+  review_extraction_command->add_flag("--open-image", open_extraction_image,
+      "Open the selected page in the default image viewer")->needs(review_page_option);
 
   auto* proposal_command =
       app.add_subcommand("proposal", "Review immutable article proposals");
@@ -685,6 +737,19 @@ int main(const int argc, char** argv) {
       ->add_option("PROPOSAL_ID", show_proposal_id, "Proposal ID")
       ->required();
 
+  bool preview_overwrite = false;
+  proposal_show_command->add_flag("--allow-overwrite-user-file", preview_overwrite,
+      "Preview complete replacement of an untracked collision");
+  auto* proposal_preview_command = proposal_command->add_subcommand("preview", "Inspect exact Markdown/diff and all rendering validation issues");
+  proposal_preview_command->fallthrough();
+  std::string preview_proposal_id;
+  proposal_preview_command->add_option("PROPOSAL_ID", preview_proposal_id)->required();
+  proposal_preview_command->add_flag("--allow-overwrite-user-file", preview_overwrite);
+  auto* revoke_command = proposal_command->add_subcommand("revoke", "Revoke an unused approval without writing the vault");
+  revoke_command->fallthrough();
+  std::string revoke_proposal_id;
+  revoke_command->add_option("PROPOSAL_ID", revoke_proposal_id)->required();
+
   auto* approve_command = proposal_command->add_subcommand(
       "approve", "Approve a pending proposal without writing the vault");
   approve_command->fallthrough();
@@ -693,6 +758,12 @@ int main(const int argc, char** argv) {
       ->add_option("PROPOSAL_ID", approve_proposal_id,
                    "Pending proposal ID")
       ->required();
+
+  std::string approval_preview_token;
+  bool approval_overwrite = false;
+  approve_command->add_option("--preview", approval_preview_token, "Exact SHA-256 token printed by proposal show/preview");
+  approve_command->add_flag("--allow-overwrite-user-file", approval_overwrite,
+      "Approve the explicitly previewed replacement of an untracked file");
 
   auto* reject_command = proposal_command->add_subcommand(
       "reject", "Reject a pending proposal without writing the vault");
@@ -950,6 +1021,9 @@ int main(const int argc, char** argv) {
             std::move(text));
       }
 
+      if (accept_extraction_text) correction = reviewer.accept_page_text(
+          kc::domain::SourceId{review_source_id}, review_page_number);
+      std::optional<std::filesystem::path> opened_image;
       const auto review = reviewer.review_extraction(
           kc::domain::SourceId{review_source_id});
       const auto selected_page = review_page_option->count() == 0U
@@ -966,16 +1040,23 @@ int main(const int argc, char** argv) {
                 std::to_string(*selected_page));
       }
 
+      if (open_extraction_image) {
+        const auto page = std::ranges::find_if(review.pages, [&](const auto& item) {
+          return item.page_number == review_page_number;
+        });
+        kc::extraction::LocalCommandRunner runner;
+        opened_image = reviewer.open_page_image(*page, runner);
+      }
       if (json_output) {
-        std::cout
-            << extraction_review_success_json(review, correction, selected_page)
-                   .dump()
-            << '\n';
+        auto output = extraction_review_success_json(review, correction, selected_page, project);
+        output["result"]["opened_image"] = opened_image
+            ? nlohmann::json(kc::domain::path_to_utf8(*opened_image)) : nlohmann::json(nullptr);
+        std::cout << output.dump() << '\n';
       } else if (!quiet) {
         std::cout << "Extraction review: " << review.display_name << " ("
                   << review.source_id.value << ")\n";
         if (correction) {
-          std::cout << "Corrected page " << correction->page_number
+          std::cout << (accept_extraction_text ? "Accepted unchanged text on page " : "Corrected page ") << correction->page_number
                     << " and marked it reviewed.\n";
         }
         for (const auto& page : review.pages) {
@@ -985,10 +1066,12 @@ int main(const int argc, char** argv) {
           std::cout << "\nPage " << page.page_number << " ["
                     << kc::domain::to_string(page.text_status) << "]\n"
                     << "Image: "
-                    << (page.image_path ? page.image_path->generic_string()
+                    << (page.image_path ? kc::domain::path_to_utf8(std::filesystem::absolute(project / *page.image_path))
                                         : "unavailable for this source")
                     << "\nExtracted text:\n"
                     << page.text << '\n';
+          if (page.image_path) std::cout << "Open image: " << project_command(project) << " review extraction " << review.source_id.value
+              << " --page " << page.page_number << " --open-image\n";
         }
       }
       return 0;
@@ -1031,7 +1114,7 @@ int main(const int argc, char** argv) {
         project = *discovered;
       }
 
-      kc::compiler::CompileOptions options{.concept_title = concept_title};
+      kc::compiler::CompileOptions options{.concept_title = concept_title, .regenerate = regenerate_concept};
       options.source_ids.reserve(compile_source_ids.size());
       for (auto& source_id : compile_source_ids) {
         options.source_ids.push_back({std::move(source_id)});
@@ -1116,13 +1199,55 @@ int main(const int argc, char** argv) {
     }
   }
 
+  if (*proposal_preview_command) {
+    try {
+      discover_project_if_unspecified(project, *project_option, "proposal preview");
+      const auto preview = kc::vault::PreviewService(project).preview(
+          kc::domain::ProposalId{preview_proposal_id}, {.allow_overwrite_user_file = preview_overwrite});
+      if (json_output) {
+        nlohmann::json output{{"ok",preview.valid},{"command","proposal preview"},
+                             {"result",{{"preview",kc::vault::preview_json(preview)}}}};
+        if (!preview.valid) output["error"] = {{"code","validation_failed"},{"message",preview.issues.front().message}};
+        std::cout << output.dump() << '\n';
+      } else if (!quiet) print_preview(preview, project);
+      return preview.valid ? 0 : 5;
+    } catch (const kc::vault::VaultError& error) {
+      if (json_output) std::cout << error_json("proposal preview", vault_error_code(error.kind()), error.what()).dump() << '\n';
+      else std::cerr << "kc proposal preview: " << error.what() << '\n';
+      return vault_exit_code(error.kind());
+    } catch (const std::exception& error) {
+      if (json_output) std::cout << error_json("proposal preview", "internal_error", error.what()).dump() << '\n';
+      else std::cerr << "kc proposal preview: " << error.what() << '\n';
+      return 6;
+    }
+  }
+
+  if (*revoke_command) {
+    try {
+      discover_review_project_if_unspecified(project, *project_option, "proposal revoke");
+      kc::review::ReviewService(project).revoke_approval(kc::domain::ProposalId{revoke_proposal_id});
+      if (json_output) std::cout << nlohmann::json{{"ok",true},{"command","proposal revoke"},
+          {"result",{{"proposal_id",revoke_proposal_id},{"status","pending"}}}}.dump() << '\n';
+      else if (!quiet) std::cout << "Revoked approval; proposal is pending and the vault is unchanged\n";
+      return 0;
+    } catch (const kc::review::ReviewError& error) {
+      if (json_output) std::cout << error_json("proposal revoke",review_error_code(error.kind()),error.what()).dump() << '\n';
+      else std::cerr << "kc proposal revoke: " << error.what() << '\n';
+      return review_exit_code(error.kind());
+    } catch (const std::exception& error) {
+      if (json_output) std::cout << error_json("proposal revoke", "internal_error", error.what()).dump() << '\n';
+      else std::cerr << "kc proposal revoke: " << error.what() << '\n';
+      return 6;
+    }
+  }
+
   if (*proposal_show_command) {
     try {
       discover_review_project_if_unspecified(project, *project_option,
                                              "proposal show");
       kc::review::ReviewService reviewer(project);
       const auto review = reviewer.review_proposal(
-          kc::domain::ProposalId{show_proposal_id});
+          kc::domain::ProposalId{show_proposal_id}, {.allow_overwrite_user_file = preview_overwrite});
       if (json_output) {
         std::cout << proposal_review_success_json(review).dump() << '\n';
       } else if (!quiet) {
@@ -1131,6 +1256,16 @@ int main(const int argc, char** argv) {
                   << "Operation: "
                   << kc::domain::to_string(review.summary.operation) << "\n\n"
                   << "# " << review.proposal.article.title << '\n';
+        if (review.update_changes) {
+          const auto& changes = *review.update_changes;
+          std::cout << "\nUpdate mode: " << changes.at("mode").get<std::string>()
+                    << "\nBase revision: " << (changes.at("base_apply_run_id").is_null() ? "unrecorded" : changes.at("base_apply_run_id").get<std::string>())
+                    << "\nRetained claims: " << changes.at("retained_claim_count")
+                    << "\nRemoved claims (including changed claims):\n"
+                    << changes.at("removed_claims").dump(2)
+                    << "\nAdded claims (including replacement claims):\n"
+                    << changes.at("added_claims").dump(2) << '\n';
+        }
         for (const auto& section : review.proposal.sections) {
           std::cout << "\n## " << section.heading << '\n';
           for (const auto& block : section.blocks) {
@@ -1149,6 +1284,7 @@ int main(const int argc, char** argv) {
                       << related.reason << '\n';
           }
         }
+        print_preview(review.preview, project);
         std::cout << "\nCitation evidence\n";
         for (const auto& evidence : review.citation_evidence) {
           std::cout << "\n" << evidence.section_key << " block "
@@ -1197,7 +1333,7 @@ int main(const int argc, char** argv) {
                                       "proposal approve");
       const kc::domain::ProposalId proposal_id{approve_proposal_id};
       kc::vault::VaultWriter writer(project);
-      writer.approve(proposal_id);
+      writer.approve(proposal_id, approval_preview_token, {.allow_overwrite_user_file = approval_overwrite});
       if (json_output) {
         std::cout << approval_success_json(proposal_id).dump() << '\n';
       } else if (!quiet) {

@@ -8,6 +8,7 @@
 #include <string>
 
 namespace kc::vault {
+struct ArticlePreview;
 
 /// Stable failure categories used by the CLI to honor its documented exits.
 enum class VaultErrorKind {
@@ -60,8 +61,13 @@ class VaultWriter {
 public:
   explicit VaultWriter(std::filesystem::path project_root);
 
-  /// Move a pending proposal to approved without changing the vault.
-  void approve(const domain::ProposalId &proposal_id);
+  [[nodiscard]] ArticlePreview preview(const domain::ProposalId& proposal_id,
+                                       const ApplyOptions& options = {}) const;
+
+  /// Approve exactly the inspected preview token without changing the vault.
+  /// Collision consent must match preview and apply; missing/stale tokens fail.
+  void approve(const domain::ProposalId &proposal_id,
+               const std::string& preview_token = {}, const ApplyOptions& options = {});
 
   /// Apply an approved proposal and return its durable audit information.
   [[nodiscard]] ApplyResult apply(const domain::ProposalId &proposal_id,

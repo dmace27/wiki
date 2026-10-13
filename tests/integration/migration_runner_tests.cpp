@@ -18,9 +18,9 @@ TEST_CASE("initial migration creates the documented database and is idempotent")
   const auto first = migrations.apply_all();
   const auto second = migrations.apply_all();
 
-  REQUIRE(first.applied_versions == std::vector<int>{1, 2, 3, 4});
+  REQUIRE(first.applied_versions == std::vector<int>{1, 2, 3, 4, 5, 6});
   CHECK(second.applied_versions.empty());
-  CHECK(database.scalar_integer("SELECT COUNT(*) FROM schema_migrations;") == 4);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM schema_migrations;") == 6);
   CHECK(database.scalar_integer(
             "SELECT COUNT(*) FROM pragma_table_info('proposals') "
             "WHERE name = 'review_reason';") == 1);
@@ -73,7 +73,7 @@ TEST_CASE("proposal review migration upgrades an existing version-one project") 
       "'2026-08-11T12:00:00Z')");
 
   kc::storage::MigrationRunner upgrade(database, KC_TEST_MIGRATIONS_DIR);
-  CHECK(upgrade.apply_all().applied_versions == std::vector<int>{2, 3, 4});
+  CHECK(upgrade.apply_all().applied_versions == std::vector<int>{2, 3, 4, 5, 6});
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM proposals") == 1);
   CHECK(database.scalar_integer(
             "SELECT COUNT(*) FROM pragma_table_info('proposals') "
@@ -109,7 +109,7 @@ TEST_CASE("source identity migration preserves historical evidence and latest or
       "INSERT INTO apply_runs VALUES ('apply_old','prp_old','art_old',NULL,'hash',NULL,'t');");
 
   kc::storage::MigrationRunner upgrade(database, KC_TEST_MIGRATIONS_DIR);
-  CHECK(upgrade.apply_all().applied_versions == std::vector<int>{3, 4});
+  CHECK(upgrade.apply_all().applied_versions == std::vector<int>{3, 4, 5, 6});
   CHECK(upgrade.apply_all().applied_versions.empty());
   CHECK(database.scalar_integer("PRAGMA foreign_keys") == 1);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM pragma_foreign_key_check") == 0);
@@ -149,4 +149,53 @@ TEST_CASE("migration rejects broken provenance and restores foreign-key enforcem
   CHECK(database.scalar_integer("PRAGMA foreign_keys") == 1);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM source_pages") == 0);
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM schema_migrations") == 1);
+}
+
+TEST_CASE("review migration preserves historical page rows and all foreign-key provenance", "[review-preview]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto legacy_directory = temporary.path() / "legacy-migrations";
+  std::filesystem::create_directory(legacy_directory);
+  for (const auto& file : std::filesystem::directory_iterator(KC_TEST_MIGRATIONS_DIR)) {
+    if (file.path().filename().string().starts_with("006_")) continue;
+    std::filesystem::copy_file(file.path(),legacy_directory / file.path().filename());
+  }
+  kc::storage::Database database(temporary.path() / "state.sqlite");
+  static_cast<void>(kc::storage::MigrationRunner(database,legacy_directory).apply_all());
+  database.execute("INSERT INTO sources VALUES ('src_legacy','Notes','text','t',NULL);");
+  database.execute("INSERT INTO source_versions VALUES ('sv_legacy','src_legacy','sourcehash','notes.txt','sources/notes.txt','text/plain',8,'t');");
+  database.execute("INSERT INTO source_pages(rowid,page_id,source_version_id,page_number,text,text_status,text_sha256,evidence_revision,image_sha256) "
+      "VALUES (27,'pg_legacy','sv_legacy',1,'old text','reviewed','texthash',12,'imagehash');");
+  database.execute("INSERT INTO proposals(proposal_id,operation,payload_json,status,created_at) VALUES ('prp_legacy','create_article','{}','rejected','t');");
+  database.execute("INSERT INTO proposal_citations VALUES ('prp_legacy','example',0,'pg_legacy',0,3,'old');");
+  database.execute("INSERT INTO proposal_evidence VALUES ('prp_legacy','pg_legacy',12,'texthash','imagehash','sourcehash');");
+  REQUIRE(kc::storage::MigrationRunner(database,KC_TEST_MIGRATIONS_DIR).apply_all().applied_versions == std::vector<int>{6});
+  CHECK(database.scalar_integer("SELECT rowid FROM source_pages") == 27);
+  CHECK(database.scalar_integer("SELECT evidence_revision FROM source_pages") == 12);
+  CHECK(database.scalar_integer("SELECT is_current FROM source_pages") == 1);
+  CHECK(database.scalar_text("SELECT image_sha256 FROM source_pages") == "imagehash");
+  CHECK(database.scalar_text("SELECT page_id FROM proposal_citations") == "pg_legacy");
+  CHECK(database.scalar_text("SELECT quote FROM proposal_citations") == "old");
+  CHECK(database.scalar_text("SELECT text_sha256 FROM proposal_evidence") == "texthash");
+  CHECK_THROWS_AS(database.execute("INSERT INTO source_pages(page_id,source_version_id,page_number,text_status,text_sha256) "
+      "VALUES ('pg_duplicate','sv_legacy',1,'reviewed','newhash')"),kc::storage::StorageError);
+  database.execute("UPDATE source_pages SET is_current=0 WHERE page_id='pg_legacy';");
+  database.execute("INSERT INTO source_pages(page_id,source_version_id,page_number,text,text_status,text_sha256,evidence_revision,supersedes_page_id) "
+      "VALUES ('pg_corrected','sv_legacy',1,'new text','reviewed','newhash',13,'pg_legacy');");
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM pragma_foreign_key_check") == 0);
+  CHECK(database.scalar_text("SELECT p.text FROM proposal_citations c JOIN source_pages p ON c.page_id=p.page_id") == "old text");
+  CHECK(database.scalar_text("SELECT text FROM source_pages WHERE is_current=1") == "new text");
+}
+
+TEST_CASE("read-only state connections cannot create or mutate review data", "[review-preview]") {
+  kc::test::TemporaryDirectory temporary;
+  const auto missing = temporary.path() / "missing.sqlite";
+  CHECK_THROWS_AS(kc::storage::Database(missing,kc::storage::OpenMode::read_only),kc::storage::StorageError);
+  CHECK_FALSE(std::filesystem::exists(missing));
+  const auto existing = temporary.path() / "existing.sqlite";
+  kc::storage::Database writer(existing);
+  writer.execute("CREATE TABLE state(value TEXT); INSERT INTO state VALUES ('original');");
+  kc::storage::Database reader(existing,kc::storage::OpenMode::read_only);
+  CHECK(reader.scalar_text("SELECT value FROM state") == "original");
+  CHECK_THROWS_AS(reader.execute("UPDATE state SET value='changed'"),kc::storage::StorageError);
+  CHECK(writer.scalar_text("SELECT value FROM state") == "original");
 }

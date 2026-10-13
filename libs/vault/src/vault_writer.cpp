@@ -1,4 +1,8 @@
 #include "kc/vault/vault_writer.hpp"
+#include "kc/vault/rendering.hpp"
+#include "kc/vault/preview.hpp"
+#include "kc/import/integrity.hpp"
+#include "kc/updates/article_updates.hpp"
 
 #include "kc/domain/id.hpp"
 #include "kc/domain/concept.hpp"
@@ -163,25 +167,6 @@ struct ProposalRecord {
       domain::ProposalOperation::create_article};
   std::string status;
   domain::ArticleProposal proposal;
-};
-
-/// Metadata required to create a readable, immutable source footnote.
-struct SourceReference {
-  domain::PageId page_id;
-  domain::SourceVersionId source_version_id;
-  domain::SourceId source_id;
-  std::uint32_t page_number{1};
-  domain::SourceKind source_kind{domain::SourceKind::text};
-  std::string display_name;
-  std::string original_filename;
-  std::filesystem::path stored_path;
-  domain::Sha256 source_sha256;
-  std::filesystem::path vault_source_path;
-};
-
-struct CitationState {
-  std::unordered_map<std::string, SourceReference> pages;
-  std::unordered_set<std::string> normalized_rows;
 };
 
 std::string utc_now() {
@@ -491,280 +476,6 @@ void validate_normalized_citations(const ProposalRecord &proposal,
   }
 }
 
-std::string
-citation_references(const std::vector<domain::Citation> &citations) {
-  std::string rendered;
-  std::unordered_set<std::string> seen;
-  for (const auto &citation : citations) {
-    if (seen.insert(citation.page_id.value).second) {
-      rendered += " [^" + citation.page_id.value + "]";
-    }
-  }
-  return rendered;
-}
-
-std::string encode_markdown_url(const std::string_view value) {
-  constexpr std::string_view hexadecimal = "0123456789ABCDEF";
-  std::string encoded;
-  encoded.reserve(value.size());
-  for (const auto character : value) {
-    const auto byte = static_cast<unsigned char>(character);
-    if (((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
-         (byte >= '0' && byte <= '9')) || character == '/' || character == '-' ||
-        character == '_' || character == '.' || character == '~') {
-      encoded.push_back(character);
-    } else {
-      encoded.push_back('%');
-      encoded.push_back(hexadecimal[(byte >> 4U) & 0x0fU]);
-      encoded.push_back(hexadecimal[byte & 0x0fU]);
-    }
-  }
-  return encoded;
-}
-
-/// JSON double-quoted strings are YAML-compatible and retain string types,
-/// including empty, boolean-looking, null-looking, and numeric-looking values.
-std::string yaml_scalar(const std::string &value) {
-  return nlohmann::json(value).dump();
-}
-
-/// yaml-cpp exposes an implicit scalar's bytes without resolving its type.
-/// Recognize YAML 1.1/1.2 ambiguous scalars so metadata readers cannot disagree
-/// with the string-valued search index. Quoted or explicitly !!str values are
-/// always strings; ordinary legacy plain aliases remain supported.
-bool yaml_string(const YAML::Node& value) {
-  if (!value.IsScalar()) {
-    return false;
-  }
-  if (value.Tag() == "!" || value.Tag() == "tag:yaml.org,2002:str") {
-    return true;
-  }
-  if (value.Tag() != "?") {
-    return false;
-  }
-  static const std::regex typed(
-      R"(^([~]|null|true|false|yes|no|on|off|[-+]?(0[xob][0-9a-f_]+|[0-9][0-9_]*(:[0-5]?[0-9])+(\.[0-9_]*)?|([0-9][0-9_]*(\.[0-9_]*)?|\.[0-9_]+)(e[-+]?[0-9]+)?|\.(inf|nan))|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}.*)$)",
-      std::regex::icase);
-  return !value.Scalar().empty() && !std::regex_match(value.Scalar(), typed);
-}
-
-/// Read effective user-owned aliases from the final article, without rewriting
-/// frontmatter. Legacy `aliases:` null is treated as an empty list. Ambiguous
-/// YAML or changed compiler identity aborts before filesystem/state publication.
-std::vector<std::string> article_aliases(const std::string& content,
-                                        const domain::ArticleId& article_id,
-                                        const std::string& title) {
-  try {
-    std::istringstream input(content);
-    std::string line;
-    const auto next_line = [&]() {
-      if (!std::getline(input, line)) {
-        return false;
-      }
-      if (line.ends_with('\r')) {
-        line.pop_back();
-      }
-      return true;
-    };
-    if (!next_line() || line != "---") {
-      throw std::invalid_argument("article must begin with YAML frontmatter");
-    }
-    std::string yaml;
-    bool closed = false;
-    while (next_line()) {
-      if (line == "---") {
-        closed = true;
-        break;
-      }
-      yaml += line + "\n";
-    }
-    if (!closed) {
-      throw std::invalid_argument("article frontmatter is not closed");
-    }
-    const auto documents = YAML::LoadAll(yaml);
-    if (documents.size() != 1U || !documents.front().IsMap()) {
-      throw std::invalid_argument("article frontmatter must be one YAML mapping");
-    }
-    const auto metadata = documents.front();
-    std::unordered_set<std::string> keys;
-    for (const auto& entry : metadata) {
-      if (!entry.first.IsScalar() || entry.first.Scalar() == "<<" ||
-          !keys.insert(entry.first.Scalar()).second) {
-        throw std::invalid_argument("article frontmatter keys must be unique scalars");
-      }
-    }
-    if (metadata["kc_schema"].as<int>() != 1 ||
-        !yaml_string(metadata["article_id"]) ||
-        metadata["article_id"].Scalar() != article_id.value ||
-        !yaml_string(metadata["title"]) || metadata["title"].Scalar() != title) {
-      throw std::invalid_argument("compiler-owned frontmatter identity has changed");
-    }
-    std::vector<std::string> aliases;
-    const auto values = metadata["aliases"];
-    if (!values || values.IsNull()) {
-      return aliases;
-    }
-    if (!values.IsSequence()) {
-      throw std::invalid_argument("aliases must be a YAML list of scalar values");
-    }
-    for (const auto& value : values) {
-      if (!yaml_string(value)) {
-        throw std::invalid_argument("aliases must be YAML strings; quote boolean, null, numeric, or date-like values");
-      }
-      // YAML scalar bytes, rather than proposal aliases, determine the index.
-      // Validate Unicode and line structure using the same metadata policy.
-      domain::ArticleProposal descriptor;
-      descriptor.article.title = title;
-      descriptor.article.aliases = {value.Scalar()};
-      if (!domain::validate_markdown(descriptor)) {
-        throw std::invalid_argument("aliases must contain safe single-line text");
-      }
-      aliases.push_back(value.Scalar());
-    }
-    return aliases;
-  } catch (const YAML::Exception& error) {
-    throw VaultError(VaultErrorKind::validation_failed,
-                     "invalid article frontmatter: " + std::string(error.what()));
-  } catch (const std::invalid_argument& error) {
-    throw VaultError(VaultErrorKind::validation_failed, error.what());
-  }
-}
-
-std::string render_managed_content(const domain::ArticleProposal &proposal,
-                                   const CitationState &citations) {
-  std::ostringstream output;
-  bool rendered_related_section = false;
-
-  for (const auto &section : proposal.sections) {
-    output << "## " << domain::markdown_literal(section.heading) << "\n\n";
-    for (const auto &block : section.blocks) {
-      if (block.kind == domain::BlockKind::bullet) {
-        output << "- ";
-      }
-      output << domain::markdown_literal(block.text) << citation_references(block.citations) << "\n\n";
-    }
-
-    if (section.key == domain::SectionKey::related_concepts) {
-      rendered_related_section = true;
-      for (const auto &related : proposal.related_concepts) {
-        output << "- [[" << related.title << "]]";
-        if (!related.reason.empty()) {
-          output << " — " << domain::markdown_literal(related.reason);
-        }
-        output << citation_references(related.citations) << "\n";
-      }
-      if (!proposal.related_concepts.empty()) {
-        output << '\n';
-      }
-    }
-  }
-
-  if (!rendered_related_section) {
-    output << "## Related concepts\n\n";
-    for (const auto &related : proposal.related_concepts) {
-      output << "- [[" << related.title << "]]";
-      if (!related.reason.empty()) {
-        output << " — " << domain::markdown_literal(related.reason);
-      }
-      output << citation_references(related.citations) << "\n";
-    }
-    output << '\n';
-  }
-
-  output << "## Sources\n\n";
-  std::set<std::string> ordered_page_ids;
-  for (const auto &section : proposal.sections) {
-    for (const auto &block : section.blocks) {
-      for (const auto &citation : block.citations) {
-        ordered_page_ids.insert(citation.page_id.value);
-      }
-    }
-  }
-  for (const auto &related : proposal.related_concepts) {
-    for (const auto &citation : related.citations) {
-      ordered_page_ids.insert(citation.page_id.value);
-    }
-  }
-
-  for (const auto &page_id : ordered_page_ids) {
-    const auto found = citations.pages.find(page_id);
-    if (found == citations.pages.end()) {
-      throw VaultError(VaultErrorKind::validation_failed,
-                       "proposal citation has no source metadata: " + page_id);
-    }
-    const auto &source = found->second;
-    auto label = domain::markdown_literal(source.display_name);
-    if (source.source_kind == domain::SourceKind::pdf) {
-      label += ", p. " + std::to_string(source.page_number);
-    }
-    auto target =
-        encode_markdown_url(domain::path_to_utf8(source.vault_source_path));
-    if (source.source_kind == domain::SourceKind::pdf) {
-      target += "#page=" + std::to_string(source.page_number);
-    }
-    output << "[^" << page_id << "]: [" << label << "](" << target << ")\n";
-  }
-
-  auto rendered = output.str();
-  while (rendered.ends_with('\n')) {
-    rendered.pop_back();
-  }
-  return rendered;
-}
-
-std::string render_new_article(const domain::ArticleProposal &proposal,
-                               const domain::ArticleId &article_id,
-                               const std::string_view start_marker,
-                               const std::string_view end_marker,
-                               const std::string &managed_content) {
-  std::ostringstream output;
-  output << "---\n"
-         << "kc_schema: 1\n"
-         << "article_id: " << yaml_scalar(article_id.value) << "\n"
-         << "title: " << yaml_scalar(proposal.article.title) << "\n"
-         << (proposal.article.aliases.empty() ? "aliases: []\n" : "aliases:\n");
-  for (const auto &alias : proposal.article.aliases) {
-    output << "  - " << yaml_scalar(alias) << "\n";
-  }
-  output << "---\n\n"
-         << "# " << domain::markdown_literal(proposal.article.title) << "\n\n"
-         << start_marker << "\n\n"
-         << managed_content << "\n\n"
-         << end_marker << "\n";
-  return output.str();
-}
-
-std::string replace_managed_content(const std::string &existing,
-                                    const std::string_view start_marker,
-                                    const std::string_view end_marker,
-                                    const std::string &managed_content) {
-  const auto start = existing.find(start_marker);
-  if (start == std::string::npos ||
-      existing.find(start_marker, start + start_marker.size()) !=
-          std::string::npos) {
-    throw VaultError(
-        VaultErrorKind::unsafe_write,
-        "existing article must contain exactly one managed start marker");
-  }
-  const auto managed_start = start + start_marker.size();
-  const auto end = existing.find(end_marker, managed_start);
-  if (end == std::string::npos ||
-      existing.find(end_marker, end + end_marker.size()) != std::string::npos) {
-    throw VaultError(
-        VaultErrorKind::unsafe_write,
-        "existing article must contain exactly one managed end marker");
-  }
-  if (existing.find(end_marker) < start) {
-    throw VaultError(VaultErrorKind::unsafe_write,
-                     "existing article managed markers are out of order");
-  }
-
-  // Prefix and suffix include the original markers. Only bytes strictly
-  // between them are replaced; all user-authored bytes remain untouched.
-  return existing.substr(0, managed_start) + "\n\n" + managed_content + "\n\n" +
-         existing.substr(end);
-}
-
 std::string read_file(const std::filesystem::path &path) {
   std::ifstream input(path, std::ios::binary);
   if (!input) {
@@ -778,54 +489,6 @@ std::string read_file(const std::filesystem::path &path) {
                      "existing article could not be read completely");
   }
   return content;
-}
-
-/// Check ownership on the final artifact as well as on incoming fields. A user
-/// prefix/suffix must not introduce an extra ownership marker. Generated text
-/// and source labels are escaped; the managed region must equal that rendering.
-void validate_rendered_article(const std::string& content,
-                               const std::string_view start_marker,
-                               const std::string_view end_marker,
-                               const std::string& managed_content) {
-  const auto start = content.find(start_marker);
-  const auto end = content.find(end_marker);
-  if (start == std::string::npos || end == std::string::npos || end <= start ||
-      content.substr(start + start_marker.size(),
-                     end - start - start_marker.size()) !=
-          "\n\n" + managed_content + "\n\n") {
-    throw VaultError(VaultErrorKind::validation_failed,
-                     "rendered article has invalid ownership boundaries");
-  }
-  // Count the reserved namespace, including markers with a different ID, so
-  // injected user/source/model markup cannot change ownership interpretation.
-  const auto first = content.find("kc:managed:");
-  const auto second = content.find("kc:managed:", first + 1U);
-  if (first != start + 5U || second != end + 5U ||
-      content.find("kc:managed:", second + 1U) != std::string::npos) {
-    throw VaultError(VaultErrorKind::validation_failed,
-                     "rendered article contains additional reserved markers");
-  }
-  // A user footnote outside the managed region must not shadow a generated
-  // source reference. Other user Markdown stays untouched.
-  std::unordered_set<std::string> source_ids;
-  std::istringstream generated(managed_content);
-  std::string line;
-  const std::regex definition(R"(^ {0,3}\[\^(pg_[0-9A-HJKMNP-TV-Z]{26})\]:)");
-  std::smatch match;
-  while (std::getline(generated, line)) {
-    if (std::regex_search(line, match, definition)) {
-      source_ids.insert(match[1].str());
-    }
-  }
-  std::unordered_set<std::string> seen;
-  std::istringstream article(content);
-  while (std::getline(article, line)) {
-    if (std::regex_search(line, match, definition) &&
-        source_ids.contains(match[1].str()) && !seen.insert(match[1].str()).second) {
-      throw VaultError(VaultErrorKind::validation_failed,
-                       "user footnote shadows a generated source reference");
-    }
-  }
 }
 
 /// Replace `destination` with a complete sibling temporary file.
@@ -950,7 +613,8 @@ void persist_success(storage::Database &database, const ProposalRecord &record,
                      const domain::Sha256 &new_sha256,
                      const std::optional<std::filesystem::path> &backup_path,
                      const std::string &rendered_content,
-                     const std::vector<std::string>& effective_aliases) {
+                     const std::vector<std::string>& effective_aliases,
+                     const std::string_view section_id) {
   const auto timestamp = utc_now();
 
   if (record.operation == domain::ProposalOperation::create_article) {
@@ -1016,6 +680,13 @@ void persist_success(storage::Database &database, const ProposalRecord &record,
   }
   audit.bind_text(7, timestamp);
   static_cast<void>(audit.step());
+
+  Statement managed_digest(database.native_handle(),
+      "UPDATE apply_runs SET managed_sha256 = ? WHERE apply_run_id = ?");
+  managed_digest.bind_text(1, source_import::sha256_text(updates::managed_region(
+      rendered_content, section_id)));
+  managed_digest.bind_text(2, apply_run_id.value);
+  static_cast<void>(managed_digest.step());
 
   Statement mark_applied(
       database.native_handle(),
@@ -1106,7 +777,277 @@ void validate_portable_destination(const std::filesystem::path& destination) {
   }
 }
 
+
+/// Freeze all generation context, not just the quoted substrings. Historical
+/// revisions remain readable; their exact recorded evidence must still match.
+nlohmann::json verify_proposal_evidence(sqlite3* connection,
+    const std::filesystem::path& root, const domain::ProjectConfig& config,
+    const domain::ProposalId& proposal_id) {
+  Statement rows(connection,
+      "SELECT pe.page_id, pe.evidence_revision, pe.text_sha256, pe.image_sha256, pe.source_sha256, "
+      "p.evidence_revision,p.text_sha256,p.image_sha256,p.text,p.image_path,v.sha256,v.stored_path "
+      "FROM proposal_evidence pe JOIN source_pages p ON p.page_id = pe.page_id "
+      "JOIN source_versions v ON v.source_version_id = p.source_version_id "
+      "WHERE pe.proposal_id = ? ORDER BY pe.page_id");
+  rows.bind_text(1, proposal_id.value);
+  auto result = nlohmann::json::array();
+  while (rows.step() == SQLITE_ROW) {
+    if (rows.integer(1) != rows.integer(5) || rows.text(2) != rows.text(6) ||
+        rows.text(3) != rows.text(7) || rows.text(4) != rows.text(10) ||
+        rows.is_null(3) != rows.is_null(9) ||
+        !domain::is_valid_source_text(rows.text(8)) ||
+        source_import::sha256_text(rows.text(8)) != rows.text(2)) {
+      throw VaultError(VaultErrorKind::validation_failed, "captured proposal evidence changed; compile and review again");
+    }
+    try {
+      source_import::verify_retained_file(root / config.paths.sources,
+          root / domain::path_from_utf8(rows.text(11)), rows.text(4));
+      if (!rows.is_null(9)) source_import::verify_retained_file(root / config.paths.cache,
+          root / domain::path_from_utf8(rows.text(9)), rows.text(3));
+    } catch (const std::exception& error) {
+      throw VaultError(VaultErrorKind::validation_failed, error.what());
+    }
+    result.push_back({rows.text(0),rows.integer(1),rows.text(2),rows.text(3),rows.text(4)});
+  }
+  Statement cited(connection,
+      "SELECT p.page_id,p.evidence_revision,p.text,p.text_sha256,p.image_path,p.image_sha256,"
+      "p.text_status,v.sha256,v.stored_path FROM source_pages p JOIN source_versions v "
+      "ON v.source_version_id = p.source_version_id WHERE p.page_id IN "
+      "(SELECT page_id FROM proposal_citations WHERE proposal_id = ?) ORDER BY p.page_id");
+  cited.bind_text(1, proposal_id.value);
+  while (cited.step() == SQLITE_ROW) {
+    if (!domain::is_valid_source_text(cited.text(2)) ||
+        source_import::sha256_text(cited.text(2)) != cited.text(3) ||
+        (cited.text(6) != "native" && cited.text(6) != "reviewed") ||
+        cited.is_null(4) != cited.is_null(5)) {
+      throw VaultError(VaultErrorKind::validation_failed, "cited page is corrupt or has not been reviewed");
+    }
+    try {
+      source_import::verify_retained_file(root / config.paths.sources,
+          root / domain::path_from_utf8(cited.text(8)), cited.text(7));
+      if (!cited.is_null(4)) source_import::verify_retained_file(root / config.paths.cache,
+          root / domain::path_from_utf8(cited.text(4)), cited.text(5));
+    } catch (const std::exception& error) {
+      throw VaultError(VaultErrorKind::validation_failed, error.what());
+    }
+    result.push_back({"cited",cited.text(0),cited.integer(1),cited.text(3),cited.text(5),cited.text(6),cited.text(7)});
+  }
+  return result;
+}
+
+struct PreparedArticle {
+  ProposalRecord record;
+  CitationState citations;
+  domain::ArticleId article_id;
+  std::filesystem::path destination;
+  std::optional<std::string> before;
+  std::string after;
+  std::vector<std::string> aliases;
+};
+
+/// Shared read-only preparation; all mutation is performed by apply afterward.
+PreparedArticle prepare_article(sqlite3* connection,
+    const std::filesystem::path& root, const domain::ProjectConfig& config,
+    const domain::ProposalId& proposal_id, const ApplyOptions& options,
+    ArticlePreview& preview) {
+    auto record = load_proposal(connection, proposal_id);
+    if (!domain::is_valid_id(proposal_id.value,"prp_")) {
+      throw VaultError(VaultErrorKind::validation_failed,"proposal ID is not a canonical ULID");
+    }
+    if (record.status != "pending" && record.status != "approved") {
+      preview.issues.push_back({"/status", "only pending or approved proposals have an approvable preview"});
+    }
+    resolve_identity(connection, record);
+    try {
+      updates::validate_base(connection, root, config, proposal_id, record.proposal);
+    } catch (const std::invalid_argument& error) {
+      throw VaultError(VaultErrorKind::validation_failed, error.what());
+    }
+
+    std::optional<ArticleRecord> existing_article;
+    domain::ArticleId article_id;
+    if (record.operation == domain::ProposalOperation::create_article) {
+      if (record.article_id || record.proposal.article.article_id) {
+        throw VaultError(
+            VaultErrorKind::validation_failed,
+            "create proposal must not identify an existing article");
+      }
+      article_id = {"art_" + proposal_id.value.substr(4)};
+    } else {
+      if (!record.article_id || !record.proposal.article.article_id ||
+          *record.article_id != *record.proposal.article.article_id) {
+        throw VaultError(VaultErrorKind::validation_failed,
+                         "update proposal article IDs do not match");
+      }
+      existing_article =
+          load_article(connection, *record.article_id);
+      if (!existing_article ||
+          existing_article->title != record.proposal.article.title ||
+          existing_article->slug != record.proposal.article.slug) {
+        throw VaultError(VaultErrorKind::validation_failed,
+                         "update proposal does not match its stored article");
+      }
+      article_id = *record.article_id;
+    }
+
+    const auto candidate_path = domain::concept_filename(record.proposal.article.title);
+    const auto relative_vault_path = existing_article
+                                         ? existing_article->vault_path
+                                         : config.paths.vault / candidate_path;
+    if (!is_safe_relative(relative_vault_path)) {
+      throw VaultError(VaultErrorKind::unsafe_write,
+                       "article path is not project-relative");
+    }
+
+    try {
+      storage::validate_concept_destination(connection, relative_vault_path, article_id);
+    } catch (const storage::StorageError& error) {
+      throw VaultError(VaultErrorKind::validation_failed, error.what());
+    }
+
+    preview.article_id = article_id;
+    preview.destination = relative_vault_path;
+    const auto vault_root = root / config.paths.vault;
+    const auto article_path = root / relative_vault_path;
+    validate_portable_destination(article_path);
+    if (!is_within(vault_root, article_path) ||
+        std::filesystem::is_symlink(article_path)) {
+      throw VaultError(VaultErrorKind::unsafe_write,
+                       "article destination escapes the configured vault");
+    }
+    if (std::filesystem::exists(article_path) &&
+        !std::filesystem::is_regular_file(article_path)) {
+      throw VaultError(VaultErrorKind::unsafe_write,
+                       "article destination is not a regular file");
+    }
+
+    const auto citation_state =
+        load_citation_state(connection, record, config);
+    validate_normalized_citations(record, citation_state);
+    std::optional<std::string> previous_content;
+    if (std::filesystem::exists(article_path)) {
+      previous_content = read_file(article_path);
+      preview.before = previous_content;
+      preview.untracked_collision = !existing_article.has_value();
+      // Collision bytes enter the diff even though a create renderer does not
+      // consume them. Validate both tracked and untracked files before diffing
+      // so diagnostic JSON never contains invalid UTF-8 or embedded NULs.
+      if (!domain::is_valid_source_text(*previous_content)) {
+        throw VaultError(VaultErrorKind::validation_failed,
+                         "existing article must be UTF-8 without embedded NULs; preserve it and repair its encoding before review");
+      }
+    } else if (existing_article) {
+      throw VaultError(VaultErrorKind::unsafe_write,
+                       "tracked article file is missing");
+    }
+
+
+    const auto rendered = render_article(record.proposal, article_id, config.vault,
+        citation_state, existing_article ? previous_content : std::nullopt);
+    preview.after = rendered.content;
+    preview.diff = rendered_diff(previous_content.value_or(""), rendered.content,
+                                 domain::path_to_utf8(relative_vault_path));
+    preview.allow_overwrite_user_file = options.allow_overwrite_user_file;
+    if (preview.untracked_collision && !options.allow_overwrite_user_file) {
+      preview.issues.push_back({"/destination", "untracked collision; preview and approve with --allow-overwrite-user-file only after reviewing the complete replacement"});
+    }
+
+    // Verify sources and already copied evidence without creating directories
+    // or copying bytes. The same checks run again when apply rebuilds preview.
+    for (const auto& [unused, source] : citation_state.pages) {
+      static_cast<void>(unused);
+      try {
+        source_import::verify_retained_file(root / config.paths.sources,
+            root / source.stored_path, source.source_sha256);
+        const auto retained = root / source.stored_path;
+        const auto copied = vault_root / source.vault_source_path;
+        if (std::filesystem::is_symlink(retained) || std::filesystem::is_symlink(copied)) {
+          throw std::invalid_argument("source copy or retained source is a symlink; restore a regular verified file");
+        }
+        if (!is_within(vault_root, copied)) throw std::invalid_argument("copied source escapes the vault");
+        if (is_within(article_path, copied) || is_within(copied, article_path)) {
+          throw std::invalid_argument("article destination overlaps copied source storage");
+        }
+        for (auto parent = copied.parent_path(); !parent.empty();) {
+          if (std::filesystem::exists(parent) && !std::filesystem::is_directory(parent)) {
+            throw std::invalid_argument("copied source parent is not a directory");
+          }
+          const auto next = parent.parent_path();
+          // A trailing separator can prevent lexical equality with vault_root;
+          // always stop at the filesystem root as well as the owning vault.
+          if (parent == vault_root || next == parent) break;
+          parent = next;
+        }
+        if (std::filesystem::exists(copied)) {
+          source_import::verify_retained_file(vault_root, copied, source.source_sha256);
+        }
+      } catch (const std::exception& error) {
+        throw VaultError(VaultErrorKind::validation_failed, error.what());
+      }
+    }
+    const auto frozen = verify_proposal_evidence(connection, root, config, proposal_id);
+    const nlohmann::json contract{{"proposal_id", proposal_id.value}, {"article_id", article_id.value},
+        {"destination", domain::path_to_utf8(relative_vault_path)}, {"config", config},
+        {"before_sha256", previous_content ? nlohmann::json(source_import::sha256_text(*previous_content)) : nlohmann::json(nullptr)},
+        {"after_sha256", source_import::sha256_text(rendered.content)},
+        {"allow_overwrite_user_file", options.allow_overwrite_user_file}, {"evidence", frozen}};
+    preview.token = source_import::sha256_text(contract.dump());
+    preview.valid = preview.issues.empty();
+    return {std::move(record), citation_state, article_id, relative_vault_path,
+            previous_content, rendered.content, rendered.aliases};
+}
+
+void require_valid_preview(const ArticlePreview& preview) {
+  if (!preview.valid) {
+    throw VaultError(VaultErrorKind::validation_failed,
+                     preview.issues.empty() ? "preview is invalid" : preview.issues.front().message);
+  }
+}
+
 } // namespace
+
+PreviewService::PreviewService(std::filesystem::path root)
+    : root_(std::filesystem::absolute(std::move(root)).lexically_normal()), config_(read_config(root_)) {}
+
+ArticlePreview PreviewService::preview(const domain::ProposalId& proposal_id,
+                                       const ApplyOptions& options) const {
+  ArticlePreview preview{.proposal_id = proposal_id};
+  storage::Database database(checked_state_path(root_, config_), storage::OpenMode::read_only);
+  database.execute("BEGIN;");
+  try {
+    static_cast<void>(prepare_article(database.native_handle(), root_, config_, proposal_id, options, preview));
+    Statement approval(database.native_handle(), "SELECT preview_sha256 FROM proposal_approvals WHERE proposal_id = ?");
+    approval.bind_text(1, proposal_id.value);
+    if (approval.step() == SQLITE_ROW) preview.matches_approval = approval.text(0) == preview.token;
+    database.execute("COMMIT;");
+  } catch (const VaultError& error) {
+    database.execute("ROLLBACK;");
+    if (error.kind() == VaultErrorKind::proposal_not_found) throw;
+    preview.valid = false;
+    preview.issues.push_back({"/preview", error.what()});
+  } catch (const std::exception& error) {
+    database.execute("ROLLBACK;");
+    preview.valid = false;
+    preview.issues.push_back({"/preview", error.what()});
+  }
+  return preview;
+}
+
+nlohmann::json preview_json(const ArticlePreview& preview) {
+  auto issues = nlohmann::json::array();
+  for (const auto& issue : preview.issues) issues.push_back({{"path",issue.path},{"message",issue.message}});
+  return {{"proposal_id",preview.proposal_id.value},
+      {"article_id", preview.article_id ? nlohmann::json(preview.article_id->value) : nlohmann::json(nullptr)},
+      {"destination",domain::path_to_utf8(preview.destination)}, {"valid",preview.valid},
+      {"untracked_collision",preview.untracked_collision}, {"allow_overwrite_user_file",preview.allow_overwrite_user_file},
+      {"before",preview.before && domain::is_valid_source_text(*preview.before) ? nlohmann::json(*preview.before) : nlohmann::json(nullptr)},
+      {"before_sha256",preview.before ? nlohmann::json(source_import::sha256_text(*preview.before)) : nlohmann::json(nullptr)},
+      {"after_sha256",preview.after ? nlohmann::json(source_import::sha256_text(*preview.after)) : nlohmann::json(nullptr)},
+      {"after",preview.after ? nlohmann::json(*preview.after) : nlohmann::json(nullptr)},
+      {"diff",preview.diff}, {"preview_sha256",preview.token.empty() ? nlohmann::json(nullptr) : nlohmann::json(preview.token)},
+      {"matches_approval",preview.matches_approval ? nlohmann::json(*preview.matches_approval) : nlohmann::json(nullptr)},
+      {"issues",issues}};
+}
 
 VaultWriter::VaultWriter(std::filesystem::path project_root)
     : project_root_(std::filesystem::absolute(std::move(project_root))
@@ -1129,7 +1070,12 @@ VaultWriter::VaultWriter(std::filesystem::path project_root)
   }
 }
 
-void VaultWriter::approve(const domain::ProposalId &proposal_id) {
+ArticlePreview VaultWriter::preview(const domain::ProposalId& proposal_id, const ApplyOptions& options) const {
+  return PreviewService(project_root_).preview(proposal_id, options);
+}
+
+void VaultWriter::approve(const domain::ProposalId &proposal_id,
+                          const std::string& preview_token, const ApplyOptions& options) {
   try {
     storage::Database database(checked_state_path(project_root_, config_));
     Transaction transaction(database);
@@ -1138,7 +1084,20 @@ void VaultWriter::approve(const domain::ProposalId &proposal_id) {
       throw VaultError(VaultErrorKind::invalid_proposal_state,
                        "only a pending proposal can be approved");
     }
-    resolve_identity(database.native_handle(), record);
+    ArticlePreview preview{.proposal_id = proposal_id};
+    static_cast<void>(prepare_article(database.native_handle(), project_root_, config_, proposal_id, options, preview));
+    require_valid_preview(preview);
+    if (preview_token.empty() || preview_token != preview.token) {
+      throw VaultError(VaultErrorKind::validation_failed,
+          "preview token is missing or changed; inspect proposal show and approve its exact --preview token");
+    }
+    Statement approval(database.native_handle(),
+        "INSERT INTO proposal_approvals(proposal_id,preview_sha256,allow_overwrite_user_file) VALUES (?,?,?) "
+        "ON CONFLICT(proposal_id) DO UPDATE SET preview_sha256=excluded.preview_sha256,allow_overwrite_user_file=excluded.allow_overwrite_user_file");
+    approval.bind_text(1, proposal_id.value);
+    approval.bind_text(2, preview.token);
+    approval.bind_integer(3, options.allow_overwrite_user_file ? 1 : 0);
+    static_cast<void>(approval.step());
     Statement statement(
         database.native_handle(),
         "UPDATE proposals SET status = 'approved', reviewed_at = ? "
@@ -1172,103 +1131,24 @@ ApplyResult VaultWriter::apply(const domain::ProposalId &proposal_id,
                        "only an approved proposal can be applied");
     }
 
-    resolve_identity(database.native_handle(), record);
-
-    const auto start_marker = "<!-- kc:managed:start id=\"" +
-                              config_.vault.generated_section_id + "\" -->";
-    constexpr std::string_view end_marker = "<!-- kc:managed:end -->";
-
-    std::optional<ArticleRecord> existing_article;
-    domain::ArticleId article_id;
-    if (record.operation == domain::ProposalOperation::create_article) {
-      if (record.article_id || record.proposal.article.article_id) {
-        throw VaultError(
-            VaultErrorKind::validation_failed,
-            "create proposal must not identify an existing article");
-      }
-      article_id = domain::generate_article_id();
-    } else {
-      if (!record.article_id || !record.proposal.article.article_id ||
-          *record.article_id != *record.proposal.article.article_id) {
-        throw VaultError(VaultErrorKind::validation_failed,
-                         "update proposal article IDs do not match");
-      }
-      existing_article =
-          load_article(database.native_handle(), *record.article_id);
-      if (!existing_article ||
-          existing_article->title != record.proposal.article.title ||
-          existing_article->slug != record.proposal.article.slug) {
-        throw VaultError(VaultErrorKind::validation_failed,
-                         "update proposal does not match its stored article");
-      }
-      article_id = *record.article_id;
+    ArticlePreview preview{.proposal_id = proposal_id};
+    const auto prepared = prepare_article(database.native_handle(), project_root_, config_, proposal_id, options, preview);
+    require_valid_preview(preview);
+    Statement approval(database.native_handle(), "SELECT preview_sha256 FROM proposal_approvals WHERE proposal_id = ?");
+    approval.bind_text(1, proposal_id.value);
+    if (approval.step() != SQLITE_ROW || approval.text(0) != preview.token) {
+      throw VaultError(VaultErrorKind::validation_failed,
+          "approved preview changed or is missing; revoke approval, preview and approve again");
     }
-
-    const auto candidate_path = domain::concept_filename(record.proposal.article.title);
-    const auto relative_vault_path = existing_article
-                                         ? existing_article->vault_path
-                                         : config_.paths.vault / candidate_path;
-    if (!is_safe_relative(relative_vault_path)) {
-      throw VaultError(VaultErrorKind::unsafe_write,
-                       "article path is not project-relative");
-    }
-
-    try {
-      storage::validate_concept_destination(database.native_handle(), relative_vault_path, article_id);
-    } catch (const storage::StorageError& error) {
-      throw VaultError(VaultErrorKind::validation_failed, error.what());
-    }
-
-    const auto vault_root = project_root_ / config_.paths.vault;
+    record = prepared.record;
+    const auto article_id = prepared.article_id;
+    const auto relative_vault_path = prepared.destination;
     const auto article_path = project_root_ / relative_vault_path;
-    validate_portable_destination(article_path);
-    if (!is_within(vault_root, article_path) ||
-        std::filesystem::is_symlink(article_path)) {
-      throw VaultError(VaultErrorKind::unsafe_write,
-                       "article destination escapes the configured vault");
-    }
-    if (std::filesystem::exists(article_path) &&
-        !std::filesystem::is_regular_file(article_path)) {
-      throw VaultError(VaultErrorKind::unsafe_write,
-                       "article destination is not a regular file");
-    }
-
-    const auto citation_state =
-        load_citation_state(database.native_handle(), record, config_);
-    validate_normalized_citations(record, citation_state);
-    const auto managed_content =
-        render_managed_content(record.proposal, citation_state);
-
-    std::optional<std::string> previous_content;
-    if (std::filesystem::exists(article_path)) {
-      previous_content = read_file(article_path);
-      if (!existing_article && !options.allow_overwrite_user_file) {
-        throw VaultError(
-            VaultErrorKind::unsafe_write,
-            "refusing to overwrite an untracked user-authored file; use the "
-            "explicit overwrite flag to approve this collision");
-      }
-    } else if (existing_article) {
-      throw VaultError(VaultErrorKind::unsafe_write,
-                       "tracked article file is missing");
-    }
-
-    std::string rendered_content;
-    if (existing_article) {
-      rendered_content = replace_managed_content(
-          *previous_content, start_marker, end_marker, managed_content);
-    } else {
-      rendered_content =
-          render_new_article(record.proposal, article_id, start_marker,
-                             end_marker, managed_content);
-    }
-
-    // Check the completed article before copying sources, making backups, or
-    // publishing state. User metadata remains byte-identical on updates.
-    const auto effective_aliases = article_aliases(
-        rendered_content, article_id, record.proposal.article.title);
-    validate_rendered_article(rendered_content, start_marker, end_marker,
-                              managed_content);
+    const auto vault_root = project_root_ / config_.paths.vault;
+    const auto& previous_content = prepared.before;
+    const auto& rendered_content = prepared.after;
+    const auto& effective_aliases = prepared.aliases;
+    const auto& citation_state = prepared.citations;
 
     // All cited sources are verified and copied before the article can expose
     // links to them. Version IDs prevent later imports from changing a target.
@@ -1291,7 +1171,7 @@ ApplyResult VaultWriter::apply(const domain::ProposalId &proposal_id,
     try {
       persist_success(database, record, article_id, relative_vault_path,
                       apply_run_id, previous_sha256, new_sha256, backup_path,
-                      rendered_content, effective_aliases);
+                      rendered_content, effective_aliases, config_.vault.generated_section_id);
       application_transaction.commit();
     } catch (...) {
       // Restore filesystem state if the post-write database transaction cannot

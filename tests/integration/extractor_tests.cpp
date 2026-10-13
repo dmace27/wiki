@@ -252,7 +252,7 @@ TEST_CASE("extraction is idempotent and force preserves stable page IDs") {
   CHECK(database.scalar_integer("SELECT COUNT(*) FROM extraction_runs") == 2);
 }
 
-TEST_CASE("forced extraction cannot replace pages cited by a proposal") {
+TEST_CASE("forced extraction revisions retain cited pages and old images") {
   kc::test::TemporaryDirectory temporary;
   const auto project_root = temporary.path() / "project";
   const auto initialized =
@@ -283,19 +283,18 @@ TEST_CASE("forced extraction cannot replace pages cited by a proposal") {
       proposal_id.value + "', 'working_explanation', 0, '" +
       first.pages.front().page_id.value + "', 0, 6, 'Usable')");
 
-  try {
-    static_cast<void>(extractor.extract(imported.source.source_id, true));
-    FAIL("expected cited-page immutability failure");
-  } catch (const kc::extraction::ExtractionError& error) {
-    CHECK(error.kind() == kc::extraction::ExtractionErrorKind::invalid_state);
-  }
-
-  CHECK(pdf_observer->render_calls == 1U);
-  CHECK(database.scalar_text("SELECT text FROM source_pages") ==
-        "Usable native page text");
-  CHECK(database.scalar_text("SELECT text_status FROM source_pages") ==
-        "native");
-  CHECK(database.scalar_integer("SELECT COUNT(*) FROM extraction_runs") == 1);
+  const auto revision = extractor.extract(imported.source.source_id, true);
+  REQUIRE(revision.pages.size() == 1U);
+  CHECK(revision.pages.front().page_id != first.pages.front().page_id);
+  CHECK(revision.pages.front().image_path != first.pages.front().image_path);
+  CHECK(std::filesystem::exists(project_root / *first.pages.front().image_path));
+  CHECK(pdf_observer->render_calls == 2U);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM source_pages") == 2);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM source_pages WHERE is_current = 1") == 1);
+  CHECK(database.scalar_text("SELECT text FROM source_pages WHERE is_current = 0") == "Usable native page text");
+  CHECK(database.scalar_text("SELECT supersedes_page_id FROM source_pages WHERE is_current = 1") == first.pages.front().page_id.value);
+  CHECK(database.scalar_text("SELECT page_id FROM proposal_citations") == first.pages.front().page_id.value);
+  CHECK(database.scalar_integer("SELECT COUNT(*) FROM extraction_runs") == 2);
 }
 
 TEST_CASE("fatal PDF rendering failures are recorded without fake page rows") {

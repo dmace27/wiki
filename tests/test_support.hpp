@@ -1,6 +1,7 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
+#include "kc/vault/preview.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -9,6 +10,13 @@
 #include <string>
 
 namespace kc::test {
+
+/// Inspect the pure preview and approve exactly its current token.
+inline void approve_preview(vault::VaultWriter& writer, const domain::ProposalId& id,
+                            const vault::ApplyOptions& options = {}) {
+  const auto preview = writer.preview(id, options);
+  writer.approve(id, preview.token, options);
+}
 
 /// Load a JSON fixture from disk, throwing a useful error if it cannot be read.
 inline nlohmann::json read_json(const std::filesystem::path& path) {

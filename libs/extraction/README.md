@@ -43,3 +43,12 @@ the SQLite write lock. Corrections and captured proposal context cannot be
 silently overwritten. All text boundaries require UTF-8 without embedded NULs.
 See [task-six rules and verification](../../docs/EXTRACTION_INTEGRITY.md) for
 canonical path ownership, migration 004, image repair, and two-process races.
+
+## Task 8 review contract
+
+Preview and apply use the same pure renderer. Approval binds exact before/after
+bytes, metadata, source evidence, destination, and collision consent with the
+inspected SHA-256 token. Any changed rendering requires renewed approval.
+Referenced extraction pages are retained; corrections/forced retries publish
+new current identities rather than rewriting citation history.
+See [exact previews and provenance-preserving review](../../docs/REVIEW_EXPERIENCE.md).
